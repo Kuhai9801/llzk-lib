@@ -55,6 +55,7 @@
 #include "llzk/Dialect/Array/IR/Ops.h"
 #include "llzk/Dialect/Array/Transforms/TransformationPasses.h"
 #include "llzk/Dialect/Array/Util/ArrayTypeHelper.h"
+#include "llzk/Dialect/Cast/IR/Dialect.h"
 #include "llzk/Dialect/Constrain/IR/Dialect.h"
 #include "llzk/Dialect/Felt/IR/Dialect.h"
 #include "llzk/Dialect/Function/IR/Ops.h"
@@ -702,7 +703,7 @@ static void baseTargetSetup(ConversionTarget &target) {
       LLZKDialect, array::ArrayDialect, boolean::BoolDialect, constrain::ConstrainDialect,
       component::StructDialect, felt::FeltDialect, function::FunctionDialect, global::GlobalDialect,
       include::IncludeDialect, polymorphic::PolymorphicDialect, arith::ArithDialect,
-      scf::SCFDialect>();
+      cast::CastDialect, scf::SCFDialect>();
   target.addLegalOp<ModuleOp>();
 }
 
