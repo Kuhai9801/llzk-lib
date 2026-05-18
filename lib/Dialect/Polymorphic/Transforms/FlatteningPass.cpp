@@ -1283,8 +1283,12 @@ public:
         // Clone and partially convert the function (concretize only the concrete params).
         FuncDefOp newFunc = callTgt.clone();
         convertCalleesInPlace(newFunc, paramNameToConcrete);
+
+        // Insert before body conversion so nested concrete callees verify from a root module.
+        symTables.getSymbolTable(newTemplate).insert(newFunc);
+        symTables.getSymbolTable(parentModule).insert(newTemplate, Block::iterator(parentTemplate));
         if (failed(applyBodyConversions(newFunc))) {
-          StringRef newFuncName = newFunc.getSymName();
+          std::string newFuncName = newFunc.getSymName().str();
           LLVM_DEBUG(
               llvm::dbgs() << "[InstantiateFuncAtCallOp]   body conversion failed for "
                            << newFuncName << '\n'
@@ -1295,10 +1299,6 @@ public:
           });
         }
 
-        // Insert the function into the new template, then the template into the module. Use the
-        // `SymbolTable::insert()` function so that the name will be made unique if necessary.
-        symTables.getSymbolTable(newTemplate).insert(newFunc);
-        symTables.getSymbolTable(parentModule).insert(newTemplate, Block::iterator(parentTemplate));
         LLVM_DEBUG(
             llvm::dbgs() << "[InstantiateFuncAtCallOp]  created partial instantiation template: "
                          << newTemplate.getSymName() << '\n'

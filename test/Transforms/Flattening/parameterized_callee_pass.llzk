@@ -112,3 +112,42 @@ module attributes {llzk.lang} {
 //
 // CHECK-LABEL: function.def @"TF_!s<@Q>_make"() -> !struct.type<@Q> attributes {function.allow_witness} {
 // CHECK:        function.call @Q::@compute() : () -> !struct.type<@Q>
+
+// -----
+
+module attributes {llzk.lang} {
+  struct.def @P {
+    function.def @compute() -> !struct.type<@P> {
+      %self = struct.new : !struct.type<@P>
+      function.return %self : !struct.type<@P>
+    }
+
+    function.def @constrain(%self: !struct.type<@P>) {
+      function.return
+    }
+  }
+
+  poly.template @TPF {
+    poly.param @S
+    poly.param @T
+
+    function.def @make(%value: !poly.tvar<@T>) -> !poly.tvar<@S> attributes {function.allow_witness} {
+      %s = function.call @S::@compute() : () -> !poly.tvar<@S>
+      function.return %s : !poly.tvar<@S>
+    }
+  }
+
+  poly.template @Outer {
+    poly.param @T
+
+    function.def @use(%value: !poly.tvar<@T>) -> !struct.type<@P> attributes {function.allow_witness} {
+      %p = function.call @TPF::@make(%value) : (!poly.tvar<@T>) -> !struct.type<@P>
+      function.return %p : !struct.type<@P>
+    }
+  }
+}
+// CHECK-LABEL: poly.template @"TPF_!s<@P>_\1A" {
+// CHECK:        function.def @make(%{{[0-9a-zA-Z_\.]+}}: !poly.tvar<@T>) -> !struct.type<@P> attributes {function.allow_witness} {
+// CHECK:          function.call @P::@compute() : () -> !struct.type<@P>
+// CHECK-NOT:      @S::@compute
+// CHECK:          function.return
