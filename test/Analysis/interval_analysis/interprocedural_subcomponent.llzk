@@ -134,30 +134,48 @@ module attributes {llzk.lang} {
 // -----
 
 module attributes {llzk.lang} {
-  poly.template @TUnknownTargetParent {
-    poly.param @T
+  function.def @accept_child(%child: !struct.type<@SkippedChild>) {
+    function.return
+  }
 
-    struct.def @UnknownTargetParent {
-      struct.member @child : !poly.tvar<@T>
+  struct.def @SkippedChild {
+    struct.member @out : !felt.type
 
-      function.def @compute(%child: !poly.tvar<@T>) -> !struct.type<@TUnknownTargetParent::@UnknownTargetParent<[@T]>> {
-        %self = struct.new : !struct.type<@TUnknownTargetParent::@UnknownTargetParent<[@T]>>
-        struct.writem %self[@child] = %child : !struct.type<@TUnknownTargetParent::@UnknownTargetParent<[@T]>>, !poly.tvar<@T>
-        function.return %self : !struct.type<@TUnknownTargetParent::@UnknownTargetParent<[@T]>>
-      }
+    function.def @compute() -> !struct.type<@SkippedChild> {
+      %self = struct.new : !struct.type<@SkippedChild>
+      function.return %self : !struct.type<@SkippedChild>
+    }
 
-      function.def @constrain(%self: !struct.type<@TUnknownTargetParent::@UnknownTargetParent<[@T]>>, %x: !felt.type) {
-        %child = struct.readm %self[@child] : !struct.type<@TUnknownTargetParent::@UnknownTargetParent<[@T]>>, !poly.tvar<@T>
-        function.call @T::@constrain(%child, %x) : (!poly.tvar<@T>, !felt.type) -> ()
-        function.return
-      }
+    function.def @constrain(%self: !struct.type<@SkippedChild>) {
+      %out = struct.readm %self[@out] : !struct.type<@SkippedChild>, !felt.type
+      %seven = felt.const 7
+      constrain.eq %out, %seven : !felt.type
+      function.return
+    }
+  }
+
+  struct.def @FreeFunctionParent {
+    struct.member @child : !struct.type<@SkippedChild>
+
+    function.def @compute() -> !struct.type<@FreeFunctionParent> {
+      %self = struct.new : !struct.type<@FreeFunctionParent>
+      function.return %self : !struct.type<@FreeFunctionParent>
+    }
+
+    function.def @constrain(%self: !struct.type<@FreeFunctionParent>) {
+      %child = struct.readm %self[@child] : !struct.type<@FreeFunctionParent>, !struct.type<@SkippedChild>
+      function.call @accept_child(%child) : (!struct.type<@SkippedChild>) -> ()
+      function.return
     }
   }
 }
 
-// CHECK-LABEL: @UnknownTargetParent StructIntervals {
-// CHECK-DAG:     %arg0[@child] in Entire
-// CHECK-DAG:     %arg1 in Entire
+// CHECK-LABEL: @SkippedChild StructIntervals {
+// CHECK-NEXT:     %arg0[@out] in Degenerate(7)
+// CHECK-NEXT: }
+
+// CHECK-LABEL: @FreeFunctionParent StructIntervals {
+// CHECK-DAG:     %arg0[@child][@out] in Entire
 // CHECK: }
 
 // -----
@@ -166,7 +184,7 @@ module attributes {llzk.lang} {
   struct.def @CycleA {
     struct.member @out : !felt.type
 
-    function.def @compute() -> !struct.type<@CycleA> {
+    function.def @compute(%other: !struct.type<@CycleB>) -> !struct.type<@CycleA> {
       %self = struct.new : !struct.type<@CycleA>
       function.return %self : !struct.type<@CycleA>
     }
@@ -180,7 +198,7 @@ module attributes {llzk.lang} {
   struct.def @CycleB {
     struct.member @out : !felt.type
 
-    function.def @compute() -> !struct.type<@CycleB> {
+    function.def @compute(%other: !struct.type<@CycleA>) -> !struct.type<@CycleB> {
       %self = struct.new : !struct.type<@CycleB>
       function.return %self : !struct.type<@CycleB>
     }
