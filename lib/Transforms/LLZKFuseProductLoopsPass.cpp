@@ -425,8 +425,8 @@ mlir::LogicalResult fuseMatchingLoopPairs(mlir::Region &body, mlir::MLIRContext 
   for (auto [w, c] : *fusionCandidates) {
     auto fusedLoop = mlir::fuseIndependentSiblingForLoops(w, c, rewriter);
     fusedLoop->setAttr(PRODUCT_SOURCE, rewriter.getAttr<mlir::StringAttr>("fused"));
-    // ...and recurse to fuse nested loops
-    if (mlir::failed(fuseMatchingLoopPairs(fusedLoop.getBodyRegion(), context))) {
+    // ...and recurse to fuse nested control flow
+    if (mlir::failed(fuseMatchingRegionControlFlow(fusedLoop.getBodyRegion(), context))) {
       return mlir::failure();
     }
   }
