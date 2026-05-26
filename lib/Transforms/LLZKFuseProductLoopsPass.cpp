@@ -22,11 +22,17 @@
 #include "llzk/Util/Constants.h"
 
 #include <mlir/Dialect/SCF/Utils/Utils.h>
+#include <mlir/IR/IRMapping.h>
+#include <mlir/IR/PatternMatch.h>
 
+#include <llvm/ADT/DenseMap.h>
+#include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/SMTAPI.h>
 
 #include <memory>
+#include <optional>
 
 namespace llzk {
 
@@ -35,6 +41,10 @@ namespace llzk {
 #include "llzk/Transforms/LLZKTransformationPasses.h.inc"
 
 using namespace llzk::function;
+using namespace llzk::component;
+
+static mlir::LogicalResult
+fuseMatchingRegionControlFlow(mlir::Region &body, mlir::MLIRContext *context);
 
 // Bitwidth of `index` for instantiating SMT variables
 constexpr int INDEX_WIDTH = 64;
@@ -46,7 +56,7 @@ public:
     mlir::ModuleOp mod = getOperation();
     mod.walk([this](FuncDefOp funcDef) {
       if (funcDef.isStructProduct()) {
-        if (mlir::failed(fuseMatchingLoopPairs(funcDef.getFunctionBody(), &getContext()))) {
+        if (mlir::failed(fuseMatchingRegionControlFlow(funcDef.getFunctionBody(), &getContext()))) {
           signalPassFailure();
         }
       }
@@ -132,6 +142,256 @@ static inline bool canLoopsBeFused(mlir::scf::ForOp a, mlir::scf::ForOp b) {
   return !*solver->check();
 }
 
+static inline bool hasProductSource(mlir::Operation *op, llvm::StringRef source) {
+  return op->getAttrOfType<mlir::StringAttr>(PRODUCT_SOURCE) == source;
+}
+
+static inline bool areOppositeProductSources(mlir::Operation *a, mlir::Operation *b) {
+  if (!a->hasAttrOfType<mlir::StringAttr>(PRODUCT_SOURCE) ||
+      !b->hasAttrOfType<mlir::StringAttr>(PRODUCT_SOURCE)) {
+    return false;
+  }
+  return a->getAttrOfType<mlir::StringAttr>(PRODUCT_SOURCE) !=
+         b->getAttrOfType<mlir::StringAttr>(PRODUCT_SOURCE);
+}
+
+static bool isBetweenInBlock(mlir::Operation *op, mlir::Operation *before, mlir::Operation *after) {
+  return op->getBlock() == before->getBlock() && op->getBlock() == after->getBlock() &&
+         before->isBeforeInBlock(op) && op->isBeforeInBlock(after);
+}
+
+struct ResultWrite {
+  mlir::Value component;
+  mlir::FlatSymbolRefAttr memberName;
+  unsigned resultIndex;
+};
+
+static std::optional<unsigned> getIfResultIndex(mlir::scf::IfOp ifOp, mlir::Value value) {
+  for (auto [idx, result] : llvm::enumerate(ifOp.getResults())) {
+    if (result == value) {
+      return idx;
+    }
+  }
+  return std::nullopt;
+}
+
+static bool isPlainReadOfWrite(MemberReadOp readOp, const ResultWrite &write) {
+  return readOp.getComponent() == write.component &&
+         readOp.getMemberNameAttr() == write.memberName && readOp->getNumOperands() == 1 &&
+         !readOp->hasAttr("tableOffset");
+}
+
+static bool collectConstrainValueMappings(
+    mlir::scf::IfOp computeIf, mlir::scf::IfOp constrainIf,
+    llvm::DenseMap<mlir::Value, unsigned> &valueToResult,
+    llvm::SmallVectorImpl<MemberReadOp> *mappedReads = nullptr
+) {
+  llvm::SmallVector<ResultWrite> writes;
+  for (mlir::Operation *op = computeIf->getNextNode(); op != constrainIf; op = op->getNextNode()) {
+    if (auto writeOp = llvm::dyn_cast<MemberWriteOp>(op)) {
+      std::optional<unsigned> resultIndex = getIfResultIndex(computeIf, writeOp.getVal());
+      if (!resultIndex) {
+        return false;
+      }
+      writes.push_back({writeOp.getComponent(), writeOp.getMemberNameAttr(), *resultIndex});
+      continue;
+    }
+
+    if (auto readOp = llvm::dyn_cast<MemberReadOp>(op)) {
+      const ResultWrite *mappedWrite = nullptr;
+      for (const ResultWrite &write : llvm::reverse(writes)) {
+        if (isPlainReadOfWrite(readOp, write)) {
+          mappedWrite = &write;
+          break;
+        }
+      }
+      if (!mappedWrite) {
+        return false;
+      }
+      if (!llvm::all_of(readOp.getVal().getUsers(), [&](mlir::Operation *user) {
+        return constrainIf->isAncestor(user);
+      })) {
+        return false;
+      }
+      valueToResult[readOp.getVal()] = mappedWrite->resultIndex;
+      if (mappedReads) {
+        mappedReads->push_back(readOp);
+      }
+      continue;
+    }
+
+    return false;
+  }
+
+  for (auto [idx, result] : llvm::enumerate(computeIf.getResults())) {
+    valueToResult[result] = idx;
+  }
+
+  auto hasInternalRead =
+      constrainIf->walk([](MemberReadOp) { return mlir::WalkResult::interrupt(); });
+  if (hasInternalRead.wasInterrupted()) {
+    return false;
+  }
+
+  auto result = constrainIf->walk([&](mlir::Operation *op) {
+    for (mlir::Value operand : op->getOperands()) {
+      mlir::Operation *def = operand.getDefiningOp();
+      if (!def || constrainIf->isAncestor(def)) {
+        continue;
+      }
+      if (valueToResult.contains(operand)) {
+        continue;
+      }
+      if (!isBetweenInBlock(def, computeIf, constrainIf)) {
+        continue;
+      }
+      return mlir::WalkResult::interrupt();
+    }
+    return mlir::WalkResult::advance();
+  });
+  return !result.wasInterrupted();
+}
+
+static bool canIfsBeFused(mlir::scf::IfOp a, mlir::scf::IfOp b) {
+  if (a->getBlock() != b->getBlock()) {
+    return false;
+  }
+  if (!areOppositeProductSources(a, b)) {
+    return false;
+  }
+
+  mlir::scf::IfOp computeIf = hasProductSource(a, FUNC_NAME_COMPUTE) ? a : b;
+  mlir::scf::IfOp constrainIf = computeIf == a ? b : a;
+  if (!computeIf->isBeforeInBlock(constrainIf)) {
+    return false;
+  }
+  if (!constrainIf->getResults().empty()) {
+    return false;
+  }
+  if (computeIf.getElseRegion().empty() != constrainIf.getElseRegion().empty()) {
+    return false;
+  }
+  if (computeIf.getCondition() != constrainIf.getCondition()) {
+    return false;
+  }
+
+  llvm::DenseMap<mlir::Value, unsigned> valueToResult;
+  return collectConstrainValueMappings(computeIf, constrainIf, valueToResult);
+}
+
+static void eraseDefaultTerminator(mlir::Block *block) {
+  if (!block->empty()) {
+    if (auto yieldOp = llvm::dyn_cast<mlir::scf::YieldOp>(block->back())) {
+      yieldOp.erase();
+    }
+  }
+}
+
+static void cloneIfBranch(
+    mlir::scf::IfOp computeIf, mlir::Block *computeBlock, mlir::Block *constrainBlock,
+    mlir::Block *destBlock, const llvm::DenseMap<mlir::Value, unsigned> &valueToResult,
+    mlir::OpBuilder &builder
+) {
+  eraseDefaultTerminator(destBlock);
+  mlir::IRMapping mapper;
+  builder.setInsertionPointToEnd(destBlock);
+
+  mlir::scf::YieldOp computeYield = llvm::cast<mlir::scf::YieldOp>(computeBlock->getTerminator());
+  for (mlir::Operation &op : computeBlock->without_terminator()) {
+    builder.clone(op, mapper);
+  }
+  for (auto [value, resultIndex] : valueToResult) {
+    mlir::Value branchValue = computeYield.getResults()[resultIndex];
+    mapper.map(value, mapper.lookupOrDefault(branchValue));
+  }
+  for (mlir::Operation &op : constrainBlock->without_terminator()) {
+    builder.clone(op, mapper);
+  }
+
+  llvm::SmallVector<mlir::Value> yieldOperands;
+  yieldOperands.reserve(computeYield.getResults().size());
+  for (mlir::Value operand : computeYield.getResults()) {
+    yieldOperands.push_back(mapper.lookupOrDefault(operand));
+  }
+  builder.create<mlir::scf::YieldOp>(computeIf.getLoc(), yieldOperands);
+}
+
+static mlir::LogicalResult fuseIfPair(
+    mlir::scf::IfOp a, mlir::scf::IfOp b, mlir::MLIRContext *context, mlir::IRRewriter &rewriter
+) {
+  mlir::scf::IfOp computeIf = hasProductSource(a, FUNC_NAME_COMPUTE) ? a : b;
+  mlir::scf::IfOp constrainIf = computeIf == a ? b : a;
+
+  llvm::DenseMap<mlir::Value, unsigned> valueToResult;
+  llvm::SmallVector<MemberReadOp> mappedReads;
+  [[maybe_unused]] bool canMap =
+      collectConstrainValueMappings(computeIf, constrainIf, valueToResult, &mappedReads);
+  assert(canMap && "fusion candidates must have already been checked");
+
+  rewriter.setInsertionPoint(computeIf);
+  mlir::scf::IfOp fusedIf = rewriter.create<mlir::scf::IfOp>(
+      computeIf.getLoc(), computeIf.getResultTypes(), computeIf.getCondition(),
+      !computeIf.getElseRegion().empty()
+  );
+  fusedIf->setAttr(PRODUCT_SOURCE, rewriter.getStringAttr("fused"));
+
+  cloneIfBranch(
+      computeIf, computeIf.thenBlock(), constrainIf.thenBlock(), fusedIf.thenBlock(), valueToResult,
+      rewriter
+  );
+  if (!computeIf.getElseRegion().empty()) {
+    cloneIfBranch(
+        computeIf, computeIf.elseBlock(), constrainIf.elseBlock(), fusedIf.elseBlock(),
+        valueToResult, rewriter
+    );
+  }
+
+  if (mlir::failed(fuseMatchingRegionControlFlow(fusedIf.getThenRegion(), context))) {
+    return mlir::failure();
+  }
+  if (!fusedIf.getElseRegion().empty() &&
+      mlir::failed(fuseMatchingRegionControlFlow(fusedIf.getElseRegion(), context))) {
+    return mlir::failure();
+  }
+
+  computeIf->replaceAllUsesWith(fusedIf->getResults());
+  rewriter.eraseOp(constrainIf);
+  rewriter.eraseOp(computeIf);
+  for (MemberReadOp readOp : mappedReads) {
+    rewriter.eraseOp(readOp);
+  }
+  return mlir::success();
+}
+
+static mlir::LogicalResult fuseMatchingIfPairs(mlir::Region &body, mlir::MLIRContext *context) {
+  llvm::SmallVector<mlir::scf::IfOp> witnessIfs, constraintIfs;
+  body.walk<mlir::WalkOrder::PreOrder>([&](mlir::scf::IfOp ifOp) {
+    if (!ifOp->hasAttrOfType<mlir::StringAttr>(PRODUCT_SOURCE)) {
+      return mlir::WalkResult::advance();
+    }
+    if (hasProductSource(ifOp, FUNC_NAME_COMPUTE)) {
+      witnessIfs.push_back(ifOp);
+    } else if (hasProductSource(ifOp, FUNC_NAME_CONSTRAIN)) {
+      constraintIfs.push_back(ifOp);
+    }
+    return mlir::WalkResult::skip();
+  });
+
+  auto fusionCandidates =
+      alignmentHelpers::getMatchingPairs<mlir::scf::IfOp>(witnessIfs, constraintIfs, canIfsBeFused);
+  if (mlir::failed(fusionCandidates)) {
+    return mlir::failure();
+  }
+
+  mlir::IRRewriter rewriter {context};
+  for (auto [w, c] : *fusionCandidates) {
+    if (mlir::failed(fuseIfPair(w, c, context, rewriter))) {
+      return mlir::failure();
+    }
+  }
+  return mlir::success();
+}
+
 mlir::LogicalResult fuseMatchingLoopPairs(mlir::Region &body, mlir::MLIRContext *context) {
   // Start by collecting all possible loops
   llvm::SmallVector<mlir::scf::ForOp> witnessLoops, constraintLoops;
@@ -171,6 +431,13 @@ mlir::LogicalResult fuseMatchingLoopPairs(mlir::Region &body, mlir::MLIRContext 
     }
   }
   return mlir::success();
+}
+
+mlir::LogicalResult fuseMatchingRegionControlFlow(mlir::Region &body, mlir::MLIRContext *context) {
+  if (mlir::failed(fuseMatchingIfPairs(body, context))) {
+    return mlir::failure();
+  }
+  return fuseMatchingLoopPairs(body, context);
 }
 
 std::unique_ptr<mlir::Pass> createFuseProductLoopsPass() {
