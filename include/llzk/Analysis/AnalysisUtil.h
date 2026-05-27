@@ -11,10 +11,6 @@
 
 #include <mlir/Analysis/DataFlowFramework.h>
 
-namespace mlir {
-class Operation;
-} // namespace mlir
-
 namespace llzk::dataflow {
 
 /// @brief Loads analyses required to initialize the Executable and PredecessorState
