@@ -1,0 +1,28 @@
+﻿// RUN: llzk-opt -llzk-duplicate-read-write-elim %s 2>&1 | FileCheck %s
+
+module attributes {llzk.lang} {
+  struct.def @BranchOverwrite {
+    struct.member @out : !felt.type {llzk.pub}
+    function.def @compute(%cond : i1, %a : !felt.type, %b : !felt.type) -> !struct.type<@BranchOverwrite> {
+      %self = struct.new : !struct.type<@BranchOverwrite>
+      %zero = felt.const 0
+      %idx = arith.constant 0 : index
+      %arr = array.new %zero : !array.type<1 x !felt.type>
+      array.write %arr[%idx] = %a : !array.type<1 x !felt.type>, !felt.type
+      scf.if %cond {
+        array.write %arr[%idx] = %b : !array.type<1 x !felt.type>, !felt.type
+      } else {
+      }
+      %r = array.read %arr[%idx] : !array.type<1 x !felt.type>, !felt.type
+      struct.writem %self[@out] = %r : !struct.type<@BranchOverwrite>, !felt.type
+      function.return %self : !struct.type<@BranchOverwrite>
+    }
+    function.def @constrain(%self : !struct.type<@BranchOverwrite>, %cond : i1, %a : !felt.type, %b : !felt.type) {
+      function.return
+    }
+  }
+}
+
+// CHECK: array.write {{.*}} = %{{.*}} : <1 x !felt.type>, !felt.type
+// CHECK: scf.if
+// CHECK: array.write {{.*}} = %{{.*}} : <1 x !felt.type>, !felt.type
