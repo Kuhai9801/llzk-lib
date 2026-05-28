@@ -1,0 +1,39 @@
+﻿// RUN: llzk-opt -I %input_dir -split-input-file -llzk-full-poly-lowering %s 2>&1 | FileCheck %s
+
+module attributes {llzk.lang} {
+  struct.def @Child {
+    struct.member @val : !felt.type {llzk.pub}
+    function.def @compute(%x: !felt.type) -> !struct.type<@Child> {
+      %self = struct.new : !struct.type<@Child>
+      struct.writem %self[@val] = %x : !struct.type<@Child>, !felt.type
+      function.return %self : !struct.type<@Child>
+    }
+    function.def @constrain(%self: !struct.type<@Child>, %x: !felt.type) {
+      %v = struct.readm %self[@val] : !struct.type<@Child>, !felt.type
+      constrain.eq %v, %x : !felt.type
+      function.return
+    }
+  }
+  struct.def @Parent {
+    struct.member @child : !struct.type<@Child>
+    struct.member @val : !felt.type
+    function.def @compute(%x: !felt.type) -> !struct.type<@Parent> {
+      %self = struct.new : !struct.type<@Parent>
+      function.return %self : !struct.type<@Parent>
+    }
+    function.def @constrain(%self: !struct.type<@Parent>, %x: !felt.type) {
+      %child = struct.readm %self[@child] : !struct.type<@Parent>, !struct.type<@Child>
+      %child_val = struct.readm %child[@val] : !struct.type<@Child>, !felt.type
+      %sq = felt.mul %child_val, %child_val
+      %quartic = felt.mul %sq, %sq
+      %parent_val = struct.readm %self[@val] : !struct.type<@Parent>, !felt.type
+      constrain.eq %parent_val, %quartic : !felt.type
+      function.return
+    }
+  }
+}
+
+// CHECK-LABEL: function.def @compute
+// CHECK: %[[SELF:.*]] = struct.new : <@Parent>
+// CHECK: %[[CHILD:.*]] = struct.readm %[[SELF]][@child]
+// CHECK: struct.readm %[[CHILD]][@val]
