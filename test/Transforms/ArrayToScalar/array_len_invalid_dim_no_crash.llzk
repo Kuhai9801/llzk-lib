@@ -1,0 +1,14 @@
+// RUN: llzk-opt --mlir-very-unsafe-disable-verifier-on-parsing --verify-each=false -llzk-array-to-scalar %s | FileCheck %s
+
+// This intentionally malformed IR checks that array-to-scalar defensively avoids
+// indexing past the array rank if verification is bypassed.
+module attributes {llzk.lang} {
+  function.def @bad_len() -> index {
+    %a = array.new : !array.type<2,3 x !felt.type>
+    %dim = arith.constant 2 : index
+    %len = array.len %a, %dim : !array.type<2,3 x !felt.type>
+    function.return %len : index
+  }
+}
+
+// CHECK: array.len

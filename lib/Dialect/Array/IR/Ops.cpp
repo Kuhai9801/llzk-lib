@@ -20,6 +20,7 @@
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/Diagnostics.h>
+#include <mlir/IR/Matchers.h>
 #include <mlir/IR/OwningOpRef.h>
 #include <mlir/IR/SymbolTable.h>
 #include <mlir/IR/ValueRange.h>
@@ -27,6 +28,8 @@
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/Twine.h>
+
+#include <optional>
 
 // TableGen'd implementation files
 #include "llzk/Dialect/Array/IR/OpInterfaces.cpp.inc"
@@ -469,7 +472,27 @@ LogicalResult InsertArrayOp::verify() {
 
 LogicalResult ArrayLengthOp::verifySymbolUses(SymbolTableCollection &tables) {
   // Ensure any SymbolRef used in the type are valid
-  return verifyTypeResolution(tables, *this, getArrRefType());
+  if (failed(verifyTypeResolution(tables, *this, getArrRefType()))) {
+    return failure();
+  }
+
+  llvm::APInt dim;
+  if (!matchPattern(getDim(), m_ConstantInt(&dim))) {
+    return success();
+  }
+
+  std::optional<int64_t> idx = dim.trySExtValue();
+  if (!idx || *idx < 0 || static_cast<size_t>(*idx) >= getArrRefType().getDimensionSizes().size()) {
+    InFlightDiagnostic diag = emitOpError("dimension index ");
+    if (idx) {
+      diag << *idx;
+    } else {
+      diag << "outside the supported index range";
+    }
+    return diag << " is out of bounds for array rank "
+                << getArrRefType().getDimensionSizes().size();
+  }
+  return success();
 }
 
 } // namespace llzk::array
