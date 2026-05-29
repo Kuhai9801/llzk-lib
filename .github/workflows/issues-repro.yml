@@ -201,3 +201,71 @@ jobs:
         with:
           name: issues-repro-output
           path: repro-out
+
+  warm-llzk-cache:
+    needs: repro
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: llzk-release
+            target: ".#llzk"
+          - name: llzk-debug
+            target: ".#llzk-debug"
+          - name: llzk-with-python
+            target: ".#llzk-with-python"
+          - name: debug-clang
+            target: ".#debugClang"
+          - name: debug-gcc
+            target: ".#debugGCC"
+          - name: installcheck-release
+            target: ".#checks.x86_64-linux.llzk-installcheck-release"
+          - name: installcheck-debug
+            target: ".#checks.x86_64-linux.llzk-installcheck-debug"
+          - name: docs
+            target: ".#docs"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@d1ca217b388ee87b2507a9a93bf01368bde7cec2
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.23.3/install
+          github_access_token: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Enable Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d
+      - name: Set Git credentials
+        run: |
+          git config --global 'url.https://api@github.com/'.insteadOf 'https://github.com/'
+          git config --global 'url.https://ssh@github.com/'.insteadOf 'ssh://git@github.com/'
+          git config --global 'url.https://git@github.com/'.insteadOf 'git@github.com:'
+      - name: Warm cache for ${{ matrix.name }}
+        run: |
+          set -euxo pipefail
+          OUT="cache-warm-out/${{ matrix.name }}"
+          mkdir -p "$OUT"
+          git remote add upstream https://github.com/project-llzk/llzk-lib.git || true
+          git fetch upstream main
+          git rev-parse HEAD | tee "$OUT/head.sha"
+          git rev-parse upstream/main | tee "$OUT/upstream-main.sha"
+          git diff --name-only upstream/main...HEAD | tee "$OUT/diff-from-upstream.txt"
+          test "$(cat "$OUT/diff-from-upstream.txt")" = ".github/workflows/issues-repro.yml"
+          sha256sum flake.lock .github/workflows/issues-repro.yml | tee "$OUT/build-input-sha256.txt"
+          {
+            echo "target=${{ matrix.target }}"
+            echo "nix_cache_action=DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d"
+            echo "runner_os=${RUNNER_OS:-unknown}"
+            echo "github_sha=${GITHUB_SHA:-unknown}"
+            echo "github_ref=${GITHUB_REF:-unknown}"
+          } | tee "$OUT/cache-warm-context.txt"
+          nix --print-build-logs build '${{ matrix.target }}' 2>&1 | tee "$OUT/nix-build.log"
+          readlink result | tee "$OUT/result-store-path.txt"
+          nix path-info --recursive ./result > "$OUT/result-closure.txt" 2> "$OUT/result-closure.stderr" || true
+          nix path-info --closure-size ./result > "$OUT/result-closure-size.txt" 2> "$OUT/result-closure-size.stderr" || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cache-warm-output-${{ matrix.name }}
+          path: cache-warm-out/${{ matrix.name }}
