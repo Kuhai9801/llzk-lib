@@ -24,6 +24,7 @@
 #include <mlir/Dialect/SCF/Utils/Utils.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
+#include <mlir/Interfaces/CallInterfaces.h>
 
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/STLExtras.h>
@@ -271,6 +272,17 @@ static bool collectConstrainValueMappings(
   auto hasInternalRead =
       constrainIf->walk([](MemberReadOp) { return mlir::WalkResult::interrupt(); });
   if (hasInternalRead.wasInterrupted()) {
+    return false;
+  }
+
+  // Calls may indirectly read members whose writes would be moved after the fused branch.
+  auto hasCallAfterMappedWrite = constrainIf->walk([&](mlir::Operation *op) {
+    if (!writes.empty() && llvm::isa<mlir::CallOpInterface>(op)) {
+      return mlir::WalkResult::interrupt();
+    }
+    return mlir::WalkResult::advance();
+  });
+  if (hasCallAfterMappedWrite.wasInterrupted()) {
     return false;
   }
 
