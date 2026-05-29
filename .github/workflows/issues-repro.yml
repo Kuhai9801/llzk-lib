@@ -113,6 +113,34 @@ jobs:
           }
           EOF
           log_run r1cs_constrain_in "$BIN/llzk-opt" "$OUT/fixtures/r1cs_constrain_in.llzk" --llzk-full-r1cs-lowering
+          cat > "$OUT/fixtures/r1cs_helper_call_dropped.llzk" <<'EOF'
+          module attributes {llzk.lang = "llzk"} {
+            function.def @force_zero(%x: !felt.type) attributes {function.allow_constraint} {
+              %zero = felt.const 0
+              constrain.eq %x, %zero : !felt.type
+              function.return
+            }
+
+            struct.def @Main {
+              struct.member @out : !felt.type {llzk.pub}
+              function.def @compute(%x: !felt.type) -> !struct.type<@Main> {
+                %self = struct.new : !struct.type<@Main>
+                struct.writem %self[@out] = %x : !struct.type<@Main>, !felt.type
+                function.return %self : !struct.type<@Main>
+              }
+              function.def @constrain(%self: !struct.type<@Main>, %x: !felt.type) attributes {function.allow_constraint} {
+                function.call @force_zero(%x) : (!felt.type) -> ()
+                %out = struct.readm %self[@out] : !struct.type<@Main>, !felt.type
+                constrain.eq %out, %x : !felt.type
+                function.return
+              }
+            }
+          }
+          EOF
+          log_run r1cs_helper_call_dropped "$BIN/llzk-opt" "$OUT/fixtures/r1cs_helper_call_dropped.llzk" --llzk-full-r1cs-lowering
+          if [ -s "$OUT/r1cs_helper_call_dropped.stdout" ]; then
+            grep -c "r1cs.constrain" "$OUT/r1cs_helper_call_dropped.stdout" > "$OUT/r1cs_helper_call_dropped.constraint_count" || true
+          fi
           cat > "$OUT/fixtures/zklean_constrain_in.llzk" <<'EOF'
           module attributes {llzk.lang = "llzk"} {
             function.def @contains(%xs: !array.type<2 x !felt.type<"babybear">>, %x: !felt.type<"babybear">) attributes {function.allow_constraint} {
@@ -146,6 +174,9 @@ jobs:
             echo "head=$(cat "$OUT/head.sha")"
             echo "upstream_main=$(cat "$OUT/upstream-main.sha")"
             for f in "$OUT"/*.exit; do echo "$(basename "$f" .exit)=$(cat "$f")"; done
+            if [ -f "$OUT/r1cs_helper_call_dropped.constraint_count" ]; then
+              echo "r1cs_helper_call_dropped_constraints=$(cat "$OUT/r1cs_helper_call_dropped.constraint_count")"
+            fi
           } > "$OUT/SUMMARY.txt"
       - uses: actions/upload-artifact@v7
         if: always()
