@@ -202,12 +202,6 @@ static bool isBetweenInBlock(mlir::Operation *op, mlir::Operation *before, mlir:
          before->isBeforeInBlock(op) && op->isBeforeInBlock(after);
 }
 
-struct ResultWrite {
-  mlir::Value component;
-  mlir::FlatSymbolRefAttr memberName;
-  unsigned resultIndex;
-};
-
 static std::optional<unsigned> getIfResultIndex(mlir::scf::IfOp ifOp, mlir::Value value) {
   for (auto [idx, result] : llvm::enumerate(ifOp.getResults())) {
     if (result == value) {
@@ -217,49 +211,25 @@ static std::optional<unsigned> getIfResultIndex(mlir::scf::IfOp ifOp, mlir::Valu
   return std::nullopt;
 }
 
-static bool isPlainReadOfWrite(MemberReadOp readOp, const ResultWrite &write) {
-  return readOp.getComponent() == write.component &&
-         readOp.getMemberNameAttr() == write.memberName && readOp->getNumOperands() == 1 &&
-         !readOp->hasAttr("tableOffset");
-}
-
 static bool collectConstrainValueMappings(
     mlir::scf::IfOp computeIf, mlir::scf::IfOp constrainIf,
-    llvm::DenseMap<mlir::Value, unsigned> &valueToResult,
-    llvm::SmallVectorImpl<MemberReadOp> *mappedReads = nullptr
+    llvm::DenseMap<mlir::Value, unsigned> &valueToResult
 ) {
-  llvm::SmallVector<ResultWrite> writes;
+  bool hasInterveningWrite = false;
   for (mlir::Operation *op = computeIf->getNextNode(); op != constrainIf; op = op->getNextNode()) {
     if (auto writeOp = llvm::dyn_cast<MemberWriteOp>(op)) {
       std::optional<unsigned> resultIndex = getIfResultIndex(computeIf, writeOp.getVal());
       if (!resultIndex) {
         return false;
       }
-      writes.push_back({writeOp.getComponent(), writeOp.getMemberNameAttr(), *resultIndex});
+      hasInterveningWrite = true;
       continue;
     }
 
-    if (auto readOp = llvm::dyn_cast<MemberReadOp>(op)) {
-      const ResultWrite *mappedWrite = nullptr;
-      for (const ResultWrite &write : llvm::reverse(writes)) {
-        if (isPlainReadOfWrite(readOp, write)) {
-          mappedWrite = &write;
-          break;
-        }
-      }
-      if (!mappedWrite) {
-        return false;
-      }
-      if (!llvm::all_of(readOp.getVal().getUsers(), [&](mlir::Operation *user) {
-        return constrainIf->isAncestor(user);
-      })) {
-        return false;
-      }
-      valueToResult[readOp.getVal()] = mappedWrite->resultIndex;
-      if (mappedReads) {
-        mappedReads->push_back(readOp);
-      }
-      continue;
+    if (llvm::isa<MemberReadOp>(op)) {
+      // Replacing a member read with the branch-local computed value can remove the member signal
+      // from emitted constraints. Keep this fusion conservative until reads can be preserved.
+      return false;
     }
 
     return false;
@@ -277,7 +247,7 @@ static bool collectConstrainValueMappings(
 
   // Calls may indirectly read members whose writes would be moved after the fused branch.
   auto hasCallAfterMappedWrite = constrainIf->walk([&](mlir::Operation *op) {
-    if (!writes.empty() && llvm::isa<mlir::CallOpInterface>(op)) {
+    if (hasInterveningWrite && llvm::isa<mlir::CallOpInterface>(op)) {
       return mlir::WalkResult::interrupt();
     }
     return mlir::WalkResult::advance();
@@ -376,9 +346,8 @@ static mlir::LogicalResult fuseIfPair(
   mlir::scf::IfOp constrainIf = computeIf == a ? b : a;
 
   llvm::DenseMap<mlir::Value, unsigned> valueToResult;
-  llvm::SmallVector<MemberReadOp> mappedReads;
   [[maybe_unused]] bool canMap =
-      collectConstrainValueMappings(computeIf, constrainIf, valueToResult, &mappedReads);
+      collectConstrainValueMappings(computeIf, constrainIf, valueToResult);
   assert(canMap && "fusion candidates must have already been checked");
 
   rewriter.setInsertionPoint(computeIf);
@@ -410,9 +379,6 @@ static mlir::LogicalResult fuseIfPair(
   computeIf->replaceAllUsesWith(fusedIf->getResults());
   rewriter.eraseOp(constrainIf);
   rewriter.eraseOp(computeIf);
-  for (MemberReadOp readOp : mappedReads) {
-    rewriter.eraseOp(readOp);
-  }
   return mlir::success();
 }
 

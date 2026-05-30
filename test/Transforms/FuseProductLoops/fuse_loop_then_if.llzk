@@ -51,6 +51,7 @@ module attributes {llzk.lang = "llzk"} {
 // CHECK-SAME:  (%[[B:[0-9a-zA-Z_\.]+]]: i1) -> !struct.type<@A>
 // CHECK:         scf.for
 // CHECK:           %[[RESULT:[0-9a-zA-Z_\.]+]] = scf.if %[[B]] -> (!felt.type) {
-// CHECK:             constrain.eq
 // CHECK:           struct.writem %{{[0-9a-zA-Z_\.]+}}[@foo] = %[[RESULT]] : <@A>, !felt.type
-// CHECK-NOT:     scf.if
+// CHECK:           %[[FOO:[0-9a-zA-Z_\.]+]] = struct.readm %{{[0-9a-zA-Z_\.]+}}[@foo] : <@A>, !felt.type
+// CHECK:           scf.if %[[B]] {
+// CHECK:             constrain.eq %[[FOO]]

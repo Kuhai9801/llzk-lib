@@ -39,14 +39,18 @@ module attributes {llzk.lang = "llzk"} {
 // CHECK:         %[[SELF:[0-9a-zA-Z_\.]+]] = struct.new : <@A>
 // CHECK-NEXT:    %[[RESULT:[0-9a-zA-Z_\.]+]] = scf.if %[[B]] -> (!felt.type) {
 // CHECK-NEXT:      %[[COMPUTE_ZERO:[0-9a-zA-Z_\.]+]] = felt.const 0
-// CHECK-NEXT:      %[[CONSTRAIN_ZERO:[0-9a-zA-Z_\.]+]] = felt.const 0
-// CHECK-NEXT:      constrain.eq %[[COMPUTE_ZERO]], %[[CONSTRAIN_ZERO]] : !felt.type, !felt.type
 // CHECK-NEXT:      scf.yield %[[COMPUTE_ZERO]] : !felt.type
 // CHECK-NEXT:    } else {
 // CHECK-NEXT:      %[[COMPUTE_ONE:[0-9a-zA-Z_\.]+]] = felt.const 1
-// CHECK-NEXT:      %[[CONSTRAIN_ONE:[0-9a-zA-Z_\.]+]] = felt.const 1
-// CHECK-NEXT:      constrain.eq %[[COMPUTE_ONE]], %[[CONSTRAIN_ONE]] : !felt.type, !felt.type
 // CHECK-NEXT:      scf.yield %[[COMPUTE_ONE]] : !felt.type
 // CHECK-NEXT:    }
 // CHECK-NEXT:    struct.writem %[[SELF]][@foo] = %[[RESULT]] : <@A>, !felt.type
+// CHECK-NEXT:    %[[FOO:[0-9a-zA-Z_\.]+]] = struct.readm %[[SELF]][@foo] : <@A>, !felt.type
+// CHECK-NEXT:    scf.if %[[B]] {
+// CHECK-NEXT:      %[[CONSTRAIN_ZERO:[0-9a-zA-Z_\.]+]] = felt.const 0
+// CHECK-NEXT:      constrain.eq %[[FOO]], %[[CONSTRAIN_ZERO]] : !felt.type, !felt.type
+// CHECK-NEXT:    } else {
+// CHECK-NEXT:      %[[CONSTRAIN_ONE:[0-9a-zA-Z_\.]+]] = felt.const 1
+// CHECK-NEXT:      constrain.eq %[[FOO]], %[[CONSTRAIN_ONE]] : !felt.type, !felt.type
+// CHECK-NEXT:    }
 // CHECK-NEXT:    function.return %[[SELF]] : !struct.type<@A>
