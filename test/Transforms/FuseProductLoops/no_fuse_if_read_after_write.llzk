@@ -43,7 +43,7 @@ module attributes {llzk.lang = "llzk"} {
 // CHECK-NEXT:    } else {
 // CHECK-NEXT:      %[[COMPUTE_ONE:[0-9a-zA-Z_\.]+]] = felt.const 1
 // CHECK-NEXT:      scf.yield {{.*}}%[[COMPUTE_ONE]] : !felt.type
-// CHECK-NEXT:    }
+// CHECK-NEXT:    } {product_source = "compute"}
 // CHECK-NEXT:    struct.writem %[[SELF]][@foo] = %[[RESULT]] : <@A>, !felt.type
 // CHECK-NEXT:    %[[FOO:[0-9a-zA-Z_\.]+]] = struct.readm %[[SELF]][@foo] : <@A>, !felt.type
 // CHECK-NEXT:    scf.if %[[B]] {
@@ -52,5 +52,5 @@ module attributes {llzk.lang = "llzk"} {
 // CHECK-NEXT:    } else {
 // CHECK-NEXT:      %[[CONSTRAIN_ONE:[0-9a-zA-Z_\.]+]] = felt.const 1
 // CHECK-NEXT:      constrain.eq %[[FOO]], %[[CONSTRAIN_ONE]] : !felt.type, !felt.type
-// CHECK-NEXT:    }
+// CHECK-NEXT:    } {product_source = "constrain"}
 // CHECK-NEXT:    function.return %[[SELF]] : !struct.type<@A>
