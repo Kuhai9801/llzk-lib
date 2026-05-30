@@ -39,10 +39,10 @@ module attributes {llzk.lang = "llzk"} {
 // CHECK:         %[[SELF:[0-9a-zA-Z_\.]+]] = struct.new : <@A>
 // CHECK-NEXT:    %[[RESULT:[0-9a-zA-Z_\.]+]] = scf.if %[[B]] -> (!felt.type) {
 // CHECK-NEXT:      %[[COMPUTE_ZERO:[0-9a-zA-Z_\.]+]] = felt.const 0
-// CHECK-NEXT:      scf.yield %[[COMPUTE_ZERO]] : !felt.type
+// CHECK-NEXT:      scf.yield {{.*}}%[[COMPUTE_ZERO]] : !felt.type
 // CHECK-NEXT:    } else {
 // CHECK-NEXT:      %[[COMPUTE_ONE:[0-9a-zA-Z_\.]+]] = felt.const 1
-// CHECK-NEXT:      scf.yield %[[COMPUTE_ONE]] : !felt.type
+// CHECK-NEXT:      scf.yield {{.*}}%[[COMPUTE_ONE]] : !felt.type
 // CHECK-NEXT:    }
 // CHECK-NEXT:    struct.writem %[[SELF]][@foo] = %[[RESULT]] : <@A>, !felt.type
 // CHECK-NEXT:    %[[FOO:[0-9a-zA-Z_\.]+]] = struct.readm %[[SELF]][@foo] : <@A>, !felt.type
