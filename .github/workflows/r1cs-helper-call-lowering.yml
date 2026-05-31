@@ -1,0 +1,194 @@
+name: R1CS Helper Call Lowering
+
+on:
+  push:
+    branches: [ r1cs-helper-call-lowering ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-lowering:
+    name: Compare helper call and inline lowering
+    runs-on: ubuntu-24.04
+    timeout-minutes: 105
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@d1ca217b388ee87b2507a9a93bf01368bde7cec2
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.23.3/install
+          github_access_token: "${{ secrets.GITHUB_TOKEN }}"
+      - uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d
+      - uses: cachix/cachix-action@v17
+        continue-on-error: true
+        with:
+          name: veridise-public
+      - name: Compare lowering results
+        run: |
+          set -euxo pipefail
+          OUT="r1cs-helper-call-lowering"; mkdir -p "$OUT/fixtures"
+          git remote add upstream https://github.com/project-llzk/llzk-lib.git || true
+          git fetch upstream main
+          git rev-parse HEAD | tee "$OUT/head.sha"
+          git rev-parse upstream/main | tee "$OUT/upstream-main.sha"
+          git diff --name-only upstream/main...HEAD | tee "$OUT/diff-from-upstream.txt"
+          printf '%s\n' '.github/workflows/r1cs-helper-call-lowering.yml' | diff -u - <(sort "$OUT/diff-from-upstream.txt")
+          sha256sum flake.lock flake.nix .github/workflows/r1cs-helper-call-lowering.yml | tee "$OUT/build-input-sha256.txt"
+          timeout 90m bash -c "nix --print-build-logs build '.#llzk' 2>&1 | tee '$OUT/nix-build.log'"
+          readlink result | tee "$OUT/result-store-path.txt"
+          ./result/bin/llzk-opt --version 2>&1 | tee "$OUT/llzk-opt-version.txt" || true
+          sed -n '540,705p' backends/r1cs/lib/r1cs/Transforms/R1CSLoweringPass.cpp > "$OUT/r1cs-lowering-source-snippet.cpp"
+          grep -n "constrainFunc.walk" backends/r1cs/lib/r1cs/Transforms/R1CSLoweringPass.cpp > "$OUT/r1cs-lowering-walk-sites.txt" || true
+
+          cat > "$OUT/fixtures/helper_call.llzk" <<'EOF'
+          module attributes {llzk.lang = "llzk"} {
+            function.def @force_zero(%x: !felt.type) attributes {function.allow_constraint} {
+              %zero = felt.const 0
+              constrain.eq %x, %zero : !felt.type
+              function.return
+            }
+            struct.def @Main {
+              struct.member @out : !felt.type {llzk.pub}
+              function.def @compute(%x: !felt.type) -> !struct.type<@Main> {
+                %self = struct.new : !struct.type<@Main>
+                struct.writem %self[@out] = %x : !struct.type<@Main>, !felt.type
+                function.return %self : !struct.type<@Main>
+              }
+              function.def @constrain(%self: !struct.type<@Main>, %x: !felt.type) attributes {function.allow_constraint} {
+                function.call @force_zero(%x) : (!felt.type) -> ()
+                %out = struct.readm %self[@out] : !struct.type<@Main>, !felt.type
+                constrain.eq %out, %x : !felt.type
+                function.return
+              }
+            }
+          }
+          EOF
+
+          cat > "$OUT/fixtures/inline_control.llzk" <<'EOF'
+          module attributes {llzk.lang = "llzk"} {
+            struct.def @Main {
+              struct.member @out : !felt.type {llzk.pub}
+              function.def @compute(%x: !felt.type) -> !struct.type<@Main> {
+                %self = struct.new : !struct.type<@Main>
+                struct.writem %self[@out] = %x : !struct.type<@Main>, !felt.type
+                function.return %self : !struct.type<@Main>
+              }
+              function.def @constrain(%self: !struct.type<@Main>, %x: !felt.type) attributes {function.allow_constraint} {
+                %zero = felt.const 0
+                constrain.eq %x, %zero : !felt.type
+                %out = struct.readm %self[@out] : !struct.type<@Main>, !felt.type
+                constrain.eq %out, %x : !felt.type
+                function.return
+              }
+            }
+          }
+          EOF
+
+          grep -c "constrain.eq" "$OUT/fixtures/helper_call.llzk" > "$OUT/helper-source-constrain-eq-count.txt" || true
+          grep -c "constrain.eq" "$OUT/fixtures/inline_control.llzk" > "$OUT/inline-source-constrain-eq-count.txt" || true
+
+          set +e
+          ./result/bin/llzk-opt "$OUT/fixtures/helper_call.llzk" --llzk-full-r1cs-lowering > "$OUT/full-helper.stdout" 2> "$OUT/full-helper.stderr"
+          full_helper_ec=$?
+          ./result/bin/llzk-opt "$OUT/fixtures/helper_call.llzk" --llzk-r1cs-lowering --llzk-remove-unnecessary-ops-and-defs > "$OUT/helper-r1cs.stdout" 2> "$OUT/helper-r1cs.stderr"
+          helper_r1cs_ec=$?
+          ./result/bin/llzk-opt "$OUT/fixtures/inline_control.llzk" --llzk-r1cs-lowering --llzk-remove-unnecessary-ops-and-defs > "$OUT/inline-r1cs.stdout" 2> "$OUT/inline-r1cs.stderr"
+          inline_r1cs_ec=$?
+          if [ -x ./result/bin/r1cs-opt ]; then
+            parser=./result/bin/r1cs-opt
+          else
+            parser=./result/bin/llzk-opt
+          fi
+          echo "$parser" > "$OUT/r1cs-parser.txt"
+          "$parser" "$OUT/helper-r1cs.stdout" > "$OUT/helper-r1cs-parse.stdout" 2> "$OUT/helper-r1cs-parse.stderr"
+          helper_parse_ec=$?
+          "$parser" "$OUT/inline-r1cs.stdout" > "$OUT/inline-r1cs-parse.stdout" 2> "$OUT/inline-r1cs-parse.stderr"
+          inline_parse_ec=$?
+          ./result/bin/llzk-opt "$OUT/fixtures/helper_call.llzk" --llzk-full-r1cs-lowering -mlir-print-ir-after=llzk-r1cs-lowering > "$OUT/full-helper-print-after.stdout" 2> "$OUT/full-helper-print-after.stderr"
+          full_print_after_ec=$?
+          set -e
+
+          echo "$full_helper_ec" > "$OUT/full-helper.exit"
+          echo "$helper_r1cs_ec" > "$OUT/helper-r1cs.exit"
+          echo "$inline_r1cs_ec" > "$OUT/inline-r1cs.exit"
+          echo "$helper_parse_ec" > "$OUT/helper-r1cs-parse.exit"
+          echo "$inline_parse_ec" > "$OUT/inline-r1cs-parse.exit"
+          echo "$full_print_after_ec" > "$OUT/full-helper-print-after.exit"
+
+          grep -c "r1cs.constrain" "$OUT/full-helper.stdout" > "$OUT/full-helper-r1cs-constrain-count.txt" || true
+          grep -c "r1cs.constrain" "$OUT/helper-r1cs.stdout" > "$OUT/helper-r1cs-constrain-count.txt" || true
+          grep -c "constrain.eq" "$OUT/helper-r1cs.stdout" > "$OUT/helper-r1cs-leftover-llzk-constrain-count.txt" || true
+          grep -c "function.call" "$OUT/helper-r1cs.stdout" > "$OUT/helper-r1cs-function-call-count.txt" || true
+          grep -c "r1cs.circuit @Main" "$OUT/helper-r1cs.stdout" > "$OUT/helper-r1cs-main-circuit-count.txt" || true
+          grep -c "r1cs.constrain" "$OUT/inline-r1cs.stdout" > "$OUT/inline-r1cs-constrain-count.txt" || true
+          grep -c "constrain.eq" "$OUT/inline-r1cs.stdout" > "$OUT/inline-r1cs-leftover-llzk-constrain-count.txt" || true
+          grep -c "r1cs.circuit @Main" "$OUT/inline-r1cs.stdout" > "$OUT/inline-r1cs-main-circuit-count.txt" || true
+
+          helper_constraints="$(cat "$OUT/helper-r1cs-constrain-count.txt" 2>/dev/null || echo 0)"
+          inline_constraints="$(cat "$OUT/inline-r1cs-constrain-count.txt" 2>/dev/null || echo 0)"
+          helper_source_constraints="$(cat "$OUT/helper-source-constrain-eq-count.txt" 2>/dev/null || echo 0)"
+          inline_source_constraints="$(cat "$OUT/inline-source-constrain-eq-count.txt" 2>/dev/null || echo 0)"
+          echo "$((inline_constraints - helper_constraints))" > "$OUT/r1cs-constraint-count-delta.txt"
+          echo "$((helper_source_constraints - helper_constraints))" > "$OUT/helper-source-to-r1cs-delta.txt"
+          echo "$((inline_source_constraints - inline_constraints))" > "$OUT/inline-source-to-r1cs-delta.txt"
+
+          {
+            echo "expected_source_constraints_helper=2"
+            echo "expected_source_constraints_inline_control=2"
+            echo "expected_r1cs_constraints_helper=1"
+            echo "expected_r1cs_constraints_inline_control=2"
+            if [ "$(cat "$OUT/helper-r1cs.exit")" = "0" ] &&
+               [ "$(cat "$OUT/helper-r1cs-parse.exit")" = "0" ] &&
+               [ "$(cat "$OUT/helper-r1cs-constrain-count.txt")" = "1" ] &&
+               [ "$(cat "$OUT/helper-r1cs-leftover-llzk-constrain-count.txt")" = "0" ] &&
+               [ "$(cat "$OUT/helper-r1cs-function-call-count.txt")" = "0" ] &&
+               [ "$(cat "$OUT/helper-r1cs-main-circuit-count.txt")" = "1" ] &&
+               [ "$(cat "$OUT/inline-r1cs.exit")" = "0" ] &&
+               [ "$(cat "$OUT/inline-r1cs-parse.exit")" = "0" ] &&
+               [ "$(cat "$OUT/inline-r1cs-constrain-count.txt")" = "2" ] &&
+               [ "$(cat "$OUT/inline-r1cs-leftover-llzk-constrain-count.txt")" = "0" ] &&
+               [ "$(cat "$OUT/inline-r1cs-main-circuit-count.txt")" = "1" ] &&
+               [ "$(cat "$OUT/helper-source-constrain-eq-count.txt")" = "2" ] &&
+               [ "$(cat "$OUT/inline-source-constrain-eq-count.txt")" = "2" ]; then
+              echo "result=accepted_r1cs_omits_helper_call_constraint"
+            else
+              echo "result=not_demonstrated_by_ci"
+            fi
+          } > "$OUT/RESULT.txt"
+
+          sha256sum "$OUT"/fixtures/*.llzk > "$OUT/fixture-sha256.txt"
+          sha256sum "$OUT"/helper-r1cs.stdout "$OUT"/inline-r1cs.stdout > "$OUT/r1cs-output-sha256.txt" 2>/dev/null || true
+          {
+            echo "head=$(cat "$OUT/head.sha")"
+            echo "upstream_main=$(cat "$OUT/upstream-main.sha")"
+            echo "llzk_result_store=$(cat "$OUT/result-store-path.txt")"
+            echo "helper_source_constrain_eq_count=$(cat "$OUT/helper-source-constrain-eq-count.txt" 2>/dev/null || true)"
+            echo "inline_source_constrain_eq_count=$(cat "$OUT/inline-source-constrain-eq-count.txt" 2>/dev/null || true)"
+            echo "full_helper_exit=$(cat "$OUT/full-helper.exit")"
+            echo "full_helper_r1cs_constrain_count=$(cat "$OUT/full-helper-r1cs-constrain-count.txt" 2>/dev/null || true)"
+            echo "helper_r1cs_exit=$(cat "$OUT/helper-r1cs.exit")"
+            echo "helper_r1cs_parse_exit=$(cat "$OUT/helper-r1cs-parse.exit")"
+            echo "helper_r1cs_constrain_count=$(cat "$OUT/helper-r1cs-constrain-count.txt" 2>/dev/null || true)"
+            echo "helper_r1cs_leftover_llzk_constrain_count=$(cat "$OUT/helper-r1cs-leftover-llzk-constrain-count.txt" 2>/dev/null || true)"
+            echo "helper_r1cs_function_call_count=$(cat "$OUT/helper-r1cs-function-call-count.txt" 2>/dev/null || true)"
+            echo "helper_r1cs_main_circuit_count=$(cat "$OUT/helper-r1cs-main-circuit-count.txt" 2>/dev/null || true)"
+            echo "inline_r1cs_exit=$(cat "$OUT/inline-r1cs.exit")"
+            echo "inline_r1cs_parse_exit=$(cat "$OUT/inline-r1cs-parse.exit")"
+            echo "inline_r1cs_constrain_count=$(cat "$OUT/inline-r1cs-constrain-count.txt" 2>/dev/null || true)"
+            echo "inline_r1cs_leftover_llzk_constrain_count=$(cat "$OUT/inline-r1cs-leftover-llzk-constrain-count.txt" 2>/dev/null || true)"
+            echo "inline_r1cs_main_circuit_count=$(cat "$OUT/inline-r1cs-main-circuit-count.txt" 2>/dev/null || true)"
+            echo "r1cs_constraint_count_delta=$(cat "$OUT/r1cs-constraint-count-delta.txt" 2>/dev/null || true)"
+            echo "helper_source_to_r1cs_delta=$(cat "$OUT/helper-source-to-r1cs-delta.txt" 2>/dev/null || true)"
+            echo "inline_source_to_r1cs_delta=$(cat "$OUT/inline-source-to-r1cs-delta.txt" 2>/dev/null || true)"
+            echo "r1cs_parser=$(cat "$OUT/r1cs-parser.txt" 2>/dev/null || true)"
+            cat "$OUT/RESULT.txt"
+            echo "full_helper_print_after_exit=$(cat "$OUT/full-helper-print-after.exit")"
+          } > "$OUT/SUMMARY.txt"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: r1cs-helper-call-lowering
+          path: r1cs-helper-call-lowering
