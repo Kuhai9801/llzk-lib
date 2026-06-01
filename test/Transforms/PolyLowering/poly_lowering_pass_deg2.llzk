@@ -225,7 +225,7 @@ module attributes {llzk.lang} {
 
 module attributes {llzk.lang} {
   struct.def @ExternPayload {
-    struct.member @value : !felt.type
+    struct.member @value : !felt.type {llzk.pub}
 
     function.def @compute(%value: !felt.type) -> !struct.type<@ExternPayload> {
       %self = struct.new : !struct.type<@ExternPayload>
