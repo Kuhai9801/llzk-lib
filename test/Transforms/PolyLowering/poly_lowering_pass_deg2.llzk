@@ -226,6 +226,16 @@ module attributes {llzk.lang} {
 module attributes {llzk.lang} {
   struct.def @ExternPayload {
     struct.member @value : !felt.type
+
+    function.def @compute(%value: !felt.type) -> !struct.type<@ExternPayload> {
+      %self = struct.new : !struct.type<@ExternPayload>
+      struct.writem %self[@value] = %value : !struct.type<@ExternPayload>, !felt.type
+      function.return %self : !struct.type<@ExternPayload>
+    }
+
+    function.def @constrain(%self: !struct.type<@ExternPayload>, %value: !felt.type) {
+      function.return
+    }
   }
 
   function.def private @extern_wrap(%value: !felt.type) -> !struct.type<@ExternPayload> attributes {extern}
