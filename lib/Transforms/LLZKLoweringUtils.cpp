@@ -14,6 +14,7 @@
 #include <mlir/IR/Operation.h>
 #include <mlir/Support/LogicalResult.h>
 
+#include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/raw_ostream.h>
 
@@ -46,6 +47,45 @@ Value rebuildExprInCompute(
         readOp.getLoc(), readOp.getType(), component, readOp.getMemberNameAttr().getAttr()
     );
     return memo[val] = rebuilt;
+  }
+
+  if (auto callOp = val.getDefiningOp<CallOp>()) {
+    SmallVector<Value> rebuiltArgs;
+    rebuiltArgs.reserve(callOp.getArgOperands().size());
+    for (Value arg : callOp.getArgOperands()) {
+      rebuiltArgs.push_back(rebuildExprInCompute(arg, computeFunc, builder, memo));
+    }
+
+    SmallVector<SmallVector<Value>> rebuiltMapOperandStorage;
+    rebuiltMapOperandStorage.reserve(callOp.getMapOperands().size());
+    for (ValueRange group : callOp.getMapOperands()) {
+      SmallVector<Value> rebuiltGroup;
+      rebuiltGroup.reserve(group.size());
+      for (Value operand : group) {
+        rebuiltGroup.push_back(rebuildExprInCompute(operand, computeFunc, builder, memo));
+      }
+      rebuiltMapOperandStorage.push_back(std::move(rebuiltGroup));
+    }
+
+    SmallVector<ValueRange> rebuiltMapOperands;
+    rebuiltMapOperands.reserve(rebuiltMapOperandStorage.size());
+    for (SmallVector<Value> &group : rebuiltMapOperandStorage) {
+      rebuiltMapOperands.push_back(group);
+    }
+
+    ArrayRef<Attribute> templateParams;
+    if (ArrayAttr params = callOp.getTemplateParamsAttr()) {
+      templateParams = params.getValue();
+    }
+
+    CallOp rebuilt = builder.create<CallOp>(
+        callOp.getLoc(), callOp.getResultTypes(), callOp.getCalleeAttr(), rebuiltMapOperands,
+        callOp.getNumDimsPerMapAttr(), rebuiltArgs, templateParams
+    );
+    for (auto [oldResult, newResult] : llvm::zip(callOp.getResults(), rebuilt.getResults())) {
+      memo[oldResult] = newResult;
+    }
+    return memo[val];
   }
 
   if (auto add = val.getDefiningOp<AddFeltOp>()) {

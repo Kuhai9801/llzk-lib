@@ -221,3 +221,41 @@ module attributes {llzk.lang} {
 // CHECK:           struct.member @__llzk_poly_lowering_pass_aux_member_1 : !felt.type
 // CHECK:           struct.member @__llzk_poly_lowering_pass_aux_member_2 : !felt.type
 // CHECK:         }
+// -----
+
+module attributes {llzk.lang} {
+  struct.def @ExternPayload {
+    struct.member @value : !felt.type
+  }
+
+  function.def private @extern_wrap(%value: !felt.type) -> !struct.type<@ExternPayload> attributes {extern}
+
+  struct.def @UsesExternPayload {
+    struct.member @out : !felt.type
+
+    function.def @compute(%x: !felt.type) -> !struct.type<@UsesExternPayload> {
+      %self = struct.new : !struct.type<@UsesExternPayload>
+      function.return %self : !struct.type<@UsesExternPayload>
+    }
+
+    function.def @constrain(%self: !struct.type<@UsesExternPayload>, %x: !felt.type) {
+      %payload = function.call @extern_wrap(%x) : (!felt.type) -> !struct.type<@ExternPayload>
+      %value = struct.readm %payload[@value] : !struct.type<@ExternPayload>, !felt.type
+      %square = felt.mul %value, %value : !felt.type, !felt.type
+      %quad = felt.mul %square, %square : !felt.type, !felt.type
+      %out = struct.readm %self[@out] : !struct.type<@UsesExternPayload>, !felt.type
+      constrain.eq %out, %quad : !felt.type
+      function.return
+    }
+  }
+}
+
+// CHECK-LABEL:   struct.def @UsesExternPayload {
+// CHECK:           function.def @compute(%[[ARG:.*]]: !felt.type) -> !struct.type<@UsesExternPayload> attributes {function.allow_witness} {
+// CHECK:             %[[SELF:.*]] = struct.new : <@UsesExternPayload>
+// CHECK:             %[[PAYLOAD:.*]] = function.call @extern_wrap(%[[ARG]]) : (!felt.type) -> !struct.type<@ExternPayload>
+// CHECK:             %[[VALUE:.*]] = struct.readm %[[PAYLOAD]][@value] : <@ExternPayload>, !felt.type
+// CHECK:             %[[SQUARE:.*]] = felt.mul %[[VALUE]], %[[VALUE]] : !felt.type, !felt.type
+// CHECK:             struct.writem %[[SELF]][@__llzk_poly_lowering_pass_aux_member_0] = %[[SQUARE]] : <@UsesExternPayload>, !felt.type
+// CHECK:             function.return %[[SELF]] : !struct.type<@UsesExternPayload>
+// CHECK:           }
