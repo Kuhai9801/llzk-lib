@@ -30,6 +30,31 @@ module attributes {llzk.lang} {
 // -----
 
 module attributes {llzk.lang} {
+  struct.def @DegreeTwoAddRoot {
+    function.def @compute(%a: !felt.type, %b: !felt.type, %d: !felt.type, %out: !felt.type) -> !struct.type<@DegreeTwoAddRoot> {
+      %self = struct.new : !struct.type<@DegreeTwoAddRoot>
+      function.return %self : !struct.type<@DegreeTwoAddRoot>
+    }
+
+    function.def @constrain(%self: !struct.type<@DegreeTwoAddRoot>, %a: !felt.type, %b: !felt.type, %d: !felt.type, %out: !felt.type) {
+      %ab = felt.mul %a, %b : !felt.type, !felt.type
+      %rhs = felt.add %ab, %d : !felt.type, !felt.type
+      constrain.eq %out, %rhs : !felt.type
+      function.return
+    }
+  }
+}
+
+// CHECK-LABEL:   struct.def @DegreeTwoAddRoot {
+// CHECK:           function.def @constrain(%[[SELF:.*]]: !struct.type<@DegreeTwoAddRoot>, %[[A:.*]]: !felt.type, %[[B:.*]]: !felt.type, %[[D:.*]]: !felt.type, %[[OUT:.*]]: !felt.type){{.*}} {
+// CHECK:             %[[AB:.*]] = felt.mul %[[A]], %[[B]] : !felt.type, !felt.type
+// CHECK:             %[[RHS:.*]] = felt.add %[[AB]], %[[D]] : !felt.type, !felt.type
+// CHECK:             constrain.eq %[[OUT]], %[[RHS]] : !felt.type, !felt.type
+// CHECK-NOT:       struct.member @__llzk_poly_lowering_pass_aux_member_0 : !felt.type
+
+// -----
+
+module attributes {llzk.lang} {
   struct.def @SubRoot {
     function.def @compute(%a: !felt.type, %b: !felt.type, %c: !felt.type, %d: !felt.type, %out: !felt.type) -> !struct.type<@SubRoot> {
       %self = struct.new : !struct.type<@SubRoot>

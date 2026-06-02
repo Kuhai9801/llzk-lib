@@ -121,34 +121,31 @@ private:
       return val;
     }
 
-    if (auto addOp = val.getDefiningOp<AddFeltOp>()) {
+    auto lowerBinaryRoot = [&](auto op) -> Value {
       Value lhs = lowerExpression(
-          addOp.getLhs(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
+          op.getLhs(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
       );
       Value rhs = lowerExpression(
-          addOp.getRhs(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
+          op.getRhs(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
       );
 
-      addOp.getLhsMutable().set(lhs);
-      addOp.getRhsMutable().set(rhs);
+      if (lhs != op.getLhs()) {
+        op.getLhsMutable().set(lhs);
+      }
+      if (rhs != op.getRhs()) {
+        op.getRhsMutable().set(rhs);
+      }
       degreeMemo[val] = std::max(getDegree(lhs, degreeMemo), getDegree(rhs, degreeMemo));
       rewrites[val] = val;
       return val;
+    };
+
+    if (auto addOp = val.getDefiningOp<AddFeltOp>()) {
+      return lowerBinaryRoot(addOp);
     }
 
     if (auto subOp = val.getDefiningOp<SubFeltOp>()) {
-      Value lhs = lowerExpression(
-          subOp.getLhs(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
-      );
-      Value rhs = lowerExpression(
-          subOp.getRhs(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
-      );
-
-      subOp.getLhsMutable().set(lhs);
-      subOp.getRhsMutable().set(rhs);
-      degreeMemo[val] = std::max(getDegree(lhs, degreeMemo), getDegree(rhs, degreeMemo));
-      rewrites[val] = val;
-      return val;
+      return lowerBinaryRoot(subOp);
     }
 
     if (auto negOp = val.getDefiningOp<NegFeltOp>()) {
@@ -156,7 +153,9 @@ private:
           negOp.getOperand(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
       );
 
-      negOp.getOperandMutable().set(operand);
+      if (operand != negOp.getOperand()) {
+        negOp.getOperandMutable().set(operand);
+      }
       degreeMemo[val] = getDegree(operand, degreeMemo);
       rewrites[val] = val;
       return val;
@@ -252,6 +251,87 @@ private:
     return val;
   }
 
+  Value materializeCallArgument(
+      Value val, StructDefOp structDef, FuncDefOp constrainFunc, CallOp callOp,
+      DenseMap<Value, unsigned> &degreeMemo, DenseMap<Value, Value> &rewrites,
+      SmallVector<AuxAssignment> &auxAssignments
+  ) {
+    Value loweredVal =
+        lowerExpression(val, structDef, constrainFunc, degreeMemo, rewrites, auxAssignments);
+    DenseMap<Value, unsigned> checkMemo;
+    if (getDegree(loweredVal, checkMemo) <= 1) {
+      return loweredVal;
+    }
+
+    std::string auxName = AUXILIARY_MEMBER_PREFIX + std::to_string(this->auxCounter++);
+    MemberDefOp auxMember = addAuxMember(structDef, auxName);
+
+    OpBuilder builder(callOp);
+    Value selfVal = constrainFunc.getSelfValueFromConstrain();
+    auto auxVal = builder.create<MemberReadOp>(
+        loweredVal.getLoc(), loweredVal.getType(), selfVal, auxMember.getNameAttr()
+    );
+
+    Location loc = builder.getFusedLoc({auxVal.getLoc(), loweredVal.getLoc()});
+    builder.create<EmitEqualityOp>(loc, auxVal, loweredVal);
+    auxAssignments.push_back({auxName, loweredVal});
+
+    degreeMemo[auxVal] = 1;
+    rewrites[loweredVal] = auxVal;
+    rewrites[val] = auxVal;
+    return auxVal;
+  }
+
+  LogicalResult checkEqualityDegrees(FuncDefOp constrainFunc) {
+    bool failedCheck = false;
+
+    constrainFunc.walk([&](EmitEqualityOp eqOp) {
+      DenseMap<Value, unsigned> checkMemo;
+      unsigned lhsDegree = getDegree(eqOp.getLhs(), checkMemo);
+      unsigned rhsDegree = getDegree(eqOp.getRhs(), checkMemo);
+
+      if (lhsDegree > maxDegree || rhsDegree > maxDegree) {
+        auto diag = eqOp.emitOpError();
+        diag << "poly lowering postcondition failed: equality operand degree exceeds max-degree "
+             << maxDegree.getValue() << " (lhs degree " << lhsDegree << ", rhs degree "
+             << rhsDegree << ")";
+        diag.report();
+        failedCheck = true;
+      }
+    });
+
+    return failure(failedCheck);
+  }
+
+  LogicalResult checkStructConstrainCallArguments(FuncDefOp constrainFunc) {
+    bool failedCheck = false;
+
+    constrainFunc.walk([&](CallOp callOp) {
+      if (!callOp.calleeIsStructConstrain()) {
+        return;
+      }
+
+      for (Value arg : callOp.getArgOperands()) {
+        if (!llvm::isa<FeltType>(arg.getType())) {
+          continue;
+        }
+
+        DenseMap<Value, unsigned> checkMemo;
+        unsigned argDegree = getDegree(arg, checkMemo);
+        if (argDegree > 1) {
+          auto diag = callOp.emitOpError();
+          diag << "poly lowering postcondition failed: struct constrain call argument degree "
+                  "exceeds 1 (argument degree "
+               << argDegree << ")";
+          diag.report();
+          failedCheck = true;
+        }
+      }
+    });
+
+    return failure(failedCheck);
+  }
+
   void runOnOperation() override {
     ModuleOp moduleOp = getOperation();
 
@@ -332,13 +412,17 @@ private:
           bool modified = false;
 
           for (Value &arg : newOperands) {
-            unsigned deg = getDegree(arg, degreeMemo);
+            if (!llvm::isa<FeltType>(arg.getType())) {
+              continue;
+            }
+
+            DenseMap<Value, unsigned> callMemo;
+            unsigned deg = getDegree(arg, callMemo);
 
             if (deg > 1) {
-              Value loweredArg = lowerExpression(
-                  arg, structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
+              arg = materializeCallArgument(
+                  arg, structDef, constrainFunc, callOp, degreeMemo, rewrites, auxAssignments
               );
-              arg = loweredArg;
               modified = true;
             }
           }
@@ -354,6 +438,16 @@ private:
           }
         }
       });
+
+      if (failed(checkEqualityDegrees(constrainFunc))) {
+        signalPassFailure();
+        return;
+      }
+
+      if (failed(checkStructConstrainCallArguments(constrainFunc))) {
+        signalPassFailure();
+        return;
+      }
 
       DenseMap<Value, Value> rebuildMemo;
       Block &computeBlock = computeFunc.getBody().front();
