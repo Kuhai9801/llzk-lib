@@ -197,30 +197,6 @@ collectDirectEqualityRefs(DataFlowSolver &solver, FuncDefOp fn) {
   return eqRefs;
 }
 
-FailureOr<SymbolLookupResult<FuncDefOp>>
-resolveCallableSilently(SymbolTableCollection &tables, CallOp fnCall) {
-  mlir::CallInterfaceCallable callable = fnCall.getCallableForCallee();
-  if (auto symbolVal = llvm::dyn_cast<Value>(callable)) {
-    SymbolLookupResult<FuncDefOp> result(symbolVal.getDefiningOp());
-    if (!result) {
-      return failure();
-    }
-    return result;
-  }
-
-  auto symbolRef = llvm::cast<SymbolRefAttr>(callable);
-  if (Operation *op = tables.lookupNearestSymbolFrom(fnCall.getOperation(), symbolRef)) {
-    SymbolLookupResult<FuncDefOp> result(op);
-    if (!result) {
-      return failure();
-    }
-    return result;
-  }
-  return lookupTopLevelSymbol<FuncDefOp>(
-      tables, symbolRef, fnCall.getOperation(), /*reportMissing=*/false
-  );
-}
-
 } // namespace
 
 /* ExpressionValue */
@@ -1825,7 +1801,7 @@ LogicalResult StructIntervals::computeIntervals(
           return;
         }
 
-        auto res = resolveCallableSilently(tables, fnCall);
+        auto res = resolveCallableSilently<FuncDefOp>(tables, fnCall);
         if (failed(res)) {
           return;
         }
@@ -1851,6 +1827,8 @@ LogicalResult StructIntervals::computeIntervals(
           );
         }
 
+        // Translate callee argument refs into parent refs and capture scalar call-site intervals
+        // that can refine direct equality groups inside the child constrain function.
         SourceRefRemappings identityTranslations;
         llvm::MapVector<SourceRef, Interval> callOperandIntervals;
         for (unsigned i = 0; i < calledFn.getNumArguments(); i++) {
@@ -1873,15 +1851,17 @@ LogicalResult StructIntervals::computeIntervals(
         }
 
         const StructIntervals &childIntervals = childAnalysis.getResult(ctx);
-        for (const auto &[childRef, childInterval] : childIntervals.getConstrainIntervals()) {
+        const auto &constrainIntervals = childIntervals.getConstrainIntervals();
+        const auto &constrainUnreducedIntervals = childIntervals.getConstrainUnreducedIntervals();
+        for (const auto &[childRef, childInterval] : constrainIntervals) {
           auto translatedRefs = translateRef(childRef, identityTranslations);
           if (failed(translatedRefs)) {
             continue;
           }
 
           std::optional<UnreducedInterval> childUnreduced = std::nullopt;
-          auto childUnreducedIt = childIntervals.getConstrainUnreducedIntervals().find(childRef);
-          if (childUnreducedIt != childIntervals.getConstrainUnreducedIntervals().end()) {
+          if (auto childUnreducedIt = constrainUnreducedIntervals.find(childRef);
+              childUnreducedIt != constrainUnreducedIntervals.end()) {
             childUnreduced = childUnreducedIt->second;
           }
 
@@ -1900,6 +1880,8 @@ LogicalResult StructIntervals::computeIntervals(
           }
         }
 
+        // Direct equalities in the child can combine child summaries, call operand intervals, and
+        // existing parent intervals before merging back into each translated parent ref.
         llvm::EquivalenceClasses<SourceRef> directEqRefs =
             collectDirectEqualityRefs(solver, calledFn);
         for (auto leaderIt = directEqRefs.begin(); leaderIt != directEqRefs.end(); ++leaderIt) {
@@ -1915,8 +1897,8 @@ LogicalResult StructIntervals::computeIntervals(
           for (auto memberIt = directEqRefs.member_begin(leaderIt);
                memberIt != directEqRefs.member_end(); ++memberIt) {
             Interval memberInterval = Interval::Entire(ctx.getField());
-            if (auto childIntervalIt = childIntervals.getConstrainIntervals().find(*memberIt);
-                childIntervalIt != childIntervals.getConstrainIntervals().end()) {
+            if (auto childIntervalIt = constrainIntervals.find(*memberIt);
+                childIntervalIt != constrainIntervals.end()) {
               memberInterval = memberInterval.intersect(childIntervalIt->second);
             }
             if (auto callOperandIt = callOperandIntervals.find(*memberIt);
