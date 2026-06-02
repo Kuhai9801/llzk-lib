@@ -293,8 +293,8 @@ private:
       if (lhsDegree > maxDegree || rhsDegree > maxDegree) {
         auto diag = eqOp.emitOpError();
         diag << "poly lowering postcondition failed: equality operand degree exceeds max-degree "
-             << maxDegree.getValue() << " (lhs degree " << lhsDegree << ", rhs degree "
-             << rhsDegree << ")";
+             << maxDegree.getValue() << " (lhs degree " << lhsDegree << ", rhs degree " << rhsDegree
+             << ")";
         diag.report();
         failedCheck = true;
       }
