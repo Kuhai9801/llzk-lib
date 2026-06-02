@@ -357,21 +357,6 @@ private:
               Value loweredArg = lowerExpression(
                   arg, structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
               );
-              if (getDegree(loweredArg, degreeMemo) > 1) {
-                OpBuilder builder(callOp);
-                std::string auxName =
-                    AUXILIARY_MEMBER_PREFIX + std::to_string(this->auxCounter++);
-                MemberDefOp auxMember = addAuxMember(structDef, auxName);
-                Value selfVal = constrainFunc.getSelfValueFromConstrain();
-                auto auxVal = builder.create<MemberReadOp>(
-                    loweredArg.getLoc(), loweredArg.getType(), selfVal, auxMember.getNameAttr()
-                );
-                Location loc = builder.getFusedLoc({auxVal.getLoc(), loweredArg.getLoc()});
-                builder.create<EmitEqualityOp>(loc, auxVal, loweredArg);
-                auxAssignments.push_back({auxName, loweredArg});
-                degreeMemo[auxVal] = 1;
-                loweredArg = auxVal;
-              }
               arg = loweredArg;
               modified = true;
             }
