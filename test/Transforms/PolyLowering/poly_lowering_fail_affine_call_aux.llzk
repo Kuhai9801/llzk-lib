@@ -26,7 +26,7 @@ module attributes {llzk.lang} {
       function.return %self : !struct.type<@UsesAffineCall>
     }
 
-    function.def @constrain(%self: !struct.type<@UsesAffineCall>) {
+    function.def @constrain(%self: !struct.type<@UsesAffineCall>) attributes {function.allow_constraint, function.allow_witness} {
       %lb = arith.constant 0 : index
       %ub = arith.constant 2 : index
       %step = arith.constant 1 : index
