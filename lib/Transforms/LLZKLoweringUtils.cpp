@@ -43,6 +43,9 @@ Value rebuildExprInCompute(
 
   if (auto readOp = val.getDefiningOp<MemberReadOp>()) {
     Value component = rebuildExprInCompute(readOp.getComponent(), computeFunc, builder, memo);
+    if (!component) {
+      return nullptr;
+    }
     Value rebuilt = builder.create<MemberReadOp>(
         readOp.getLoc(), readOp.getType(), component, readOp.getMemberNameAttr().getAttr()
     );
@@ -50,27 +53,21 @@ Value rebuildExprInCompute(
   }
 
   if (auto callOp = val.getDefiningOp<CallOp>()) {
+    if (!callOp.getMapOperands().empty()) {
+      callOp.emitError(
+          "cannot rebuild affine-instantiated function.call in compute-side auxiliary expression"
+      );
+      return nullptr;
+    }
+
     SmallVector<Value> rebuiltArgs;
     rebuiltArgs.reserve(callOp.getArgOperands().size());
     for (Value arg : callOp.getArgOperands()) {
-      rebuiltArgs.push_back(rebuildExprInCompute(arg, computeFunc, builder, memo));
-    }
-
-    SmallVector<SmallVector<Value>> rebuiltMapOperandStorage;
-    rebuiltMapOperandStorage.reserve(callOp.getMapOperands().size());
-    for (ValueRange group : callOp.getMapOperands()) {
-      SmallVector<Value> rebuiltGroup;
-      rebuiltGroup.reserve(group.size());
-      for (Value operand : group) {
-        rebuiltGroup.push_back(rebuildExprInCompute(operand, computeFunc, builder, memo));
+      Value rebuiltArg = rebuildExprInCompute(arg, computeFunc, builder, memo);
+      if (!rebuiltArg) {
+        return nullptr;
       }
-      rebuiltMapOperandStorage.push_back(std::move(rebuiltGroup));
-    }
-
-    SmallVector<ValueRange> rebuiltMapOperands;
-    rebuiltMapOperands.reserve(rebuiltMapOperandStorage.size());
-    for (SmallVector<Value> &group : rebuiltMapOperandStorage) {
-      rebuiltMapOperands.push_back(group);
+      rebuiltArgs.push_back(rebuiltArg);
     }
 
     ArrayRef<Attribute> templateParams;
@@ -79,8 +76,8 @@ Value rebuildExprInCompute(
     }
 
     CallOp rebuilt = builder.create<CallOp>(
-        callOp.getLoc(), callOp.getResultTypes(), callOp.getCalleeAttr(), rebuiltMapOperands,
-        callOp.getNumDimsPerMapAttr(), rebuiltArgs, templateParams
+        callOp.getLoc(), callOp.getResultTypes(), callOp.getCalleeAttr(), rebuiltArgs,
+        templateParams
     );
     for (auto [oldResult, newResult] : llvm::zip(callOp.getResults(), rebuilt.getResults())) {
       memo[oldResult] = newResult;
@@ -91,29 +88,44 @@ Value rebuildExprInCompute(
   if (auto add = val.getDefiningOp<AddFeltOp>()) {
     Value lhs = rebuildExprInCompute(add.getLhs(), computeFunc, builder, memo);
     Value rhs = rebuildExprInCompute(add.getRhs(), computeFunc, builder, memo);
+    if (!lhs || !rhs) {
+      return nullptr;
+    }
     return memo[val] = builder.create<AddFeltOp>(add.getLoc(), add.getType(), lhs, rhs);
   }
 
   if (auto sub = val.getDefiningOp<SubFeltOp>()) {
     Value lhs = rebuildExprInCompute(sub.getLhs(), computeFunc, builder, memo);
     Value rhs = rebuildExprInCompute(sub.getRhs(), computeFunc, builder, memo);
+    if (!lhs || !rhs) {
+      return nullptr;
+    }
     return memo[val] = builder.create<SubFeltOp>(sub.getLoc(), sub.getType(), lhs, rhs);
   }
 
   if (auto mul = val.getDefiningOp<MulFeltOp>()) {
     Value lhs = rebuildExprInCompute(mul.getLhs(), computeFunc, builder, memo);
     Value rhs = rebuildExprInCompute(mul.getRhs(), computeFunc, builder, memo);
+    if (!lhs || !rhs) {
+      return nullptr;
+    }
     return memo[val] = builder.create<MulFeltOp>(mul.getLoc(), mul.getType(), lhs, rhs);
   }
 
   if (auto neg = val.getDefiningOp<NegFeltOp>()) {
     Value operand = rebuildExprInCompute(neg.getOperand(), computeFunc, builder, memo);
+    if (!operand) {
+      return nullptr;
+    }
     return memo[val] = builder.create<NegFeltOp>(neg.getLoc(), neg.getType(), operand);
   }
 
   if (auto div = val.getDefiningOp<DivFeltOp>()) {
     Value lhs = rebuildExprInCompute(div.getLhs(), computeFunc, builder, memo);
     Value rhs = rebuildExprInCompute(div.getRhs(), computeFunc, builder, memo);
+    if (!lhs || !rhs) {
+      return nullptr;
+    }
     return memo[val] = builder.create<DivFeltOp>(div.getLoc(), div.getType(), lhs, rhs);
   }
 

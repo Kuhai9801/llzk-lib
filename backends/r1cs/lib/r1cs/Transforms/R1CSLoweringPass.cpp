@@ -696,6 +696,10 @@ class PassImpl : public r1cs::impl::R1CSLoweringPassBase<PassImpl> {
 
       for (const auto &assign : auxAssignments) {
         Value expr = rebuildExprInCompute(assign.computedValue, computeFunc, builder, rebuildMemo);
+        if (!expr) {
+          signalPassFailure();
+          return;
+        }
         builder.create<MemberWriteOp>(
             assign.computedValue.getLoc(), selfVal, builder.getStringAttr(assign.auxMemberName),
             expr
