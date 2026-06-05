@@ -10,7 +10,7 @@ module attributes {llzk.lang} {
     struct.def @ToFelt {
       struct.member @out : !felt.type {llzk.pub}
 
-      function.def @compute() -> !struct.type<@TToFelt::@ToFelt<[@A]>> {
+      function.def @product() -> !struct.type<@TToFelt::@ToFelt<[@A]>> attributes {function.allow_constraint, function.allow_witness} {
         %self = struct.new : !struct.type<@TToFelt::@ToFelt<[@A]>>
         function.return %self : !struct.type<@TToFelt::@ToFelt<[@A]>>
       }
@@ -35,7 +35,7 @@ module attributes {llzk.lang} {
       %step = arith.constant 1 : index
       scf.for %i = %lb to %ub step %step {
         // expected-error@+1 {{cannot rebuild affine-instantiated function.call in compute-side auxiliary expression}}
-        %payload = function.call @TToFelt::@ToFelt::@compute(){(%i)} : () -> !ToFelt
+        %payload = function.call @TToFelt::@ToFelt::@product(){(%i)} : () -> !ToFelt
         %value = struct.readm %payload[@out] : !ToFelt, !felt.type
         %square = felt.mul %value, %value : !felt.type, !felt.type
         %quad = felt.mul %square, %square : !felt.type, !felt.type
