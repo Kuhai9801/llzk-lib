@@ -2337,9 +2337,9 @@ private:
 
 void addWitgenPreparePipeline(OpPassManager &pm, const WitgenOptions &) {
   using namespace llzk::polymorphic;
-  pm.addPass(
-      createFlatteningPass(FlatteningPassOptions {.cleanupMode = StructCleanupMode::ConcreteAsRoot})
-  );
+  pm.addPass(createFlatteningPass(
+      FlatteningPassOptions {.cleanupMode = FlatteningCleanupMode::ConcreteAsRoot}
+  ));
   pm.addPass(mlir::createLowerAffinePass());
   // TODO: simplify lowering with `llzk-inline-structs` and `llzk-pod-to-scalar` when both are
   // available and support PODs.
