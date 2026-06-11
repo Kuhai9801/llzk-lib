@@ -23,8 +23,8 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 class ArrayDialectOp<string mnemonic, list<Trait> traits = []>
     : Op<ArrayDialect, mnemonic, traits>;
 
-def DiscardableAllocationResource :
-  Resource<"::llzk::array::DiscardableAllocationResource">;
+def DiscardableAllocationResource
+    : Resource<"::llzk::array::DiscardableAllocationResource">;
 
 class ArrayAccessOpBase<string mnemonic, list<Trait> traits = []>
     : ArrayDialectOp<
@@ -107,8 +107,8 @@ class RangedArrayAccessOp<string mnemonic, bit isRead, list<Trait> traits = []>
 def LLZK_CreateArrayOp
     : ArrayDialectOp<
           "new",
-          [MemoryEffects<[MemAlloc<DiscardableAllocationResource>]>, AttrSizedOperandSegments,
-           VerifySizesForMultiAffineOps<1>,
+          [MemoryEffects<[MemAlloc<DiscardableAllocationResource>]>,
+           AttrSizedOperandSegments, VerifySizesForMultiAffineOps<1>,
            DeclareOpInterfaceMethods<SymbolUserOpInterface>,
            DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>,
            DeclareOpInterfaceMethods<PromotableAllocationOpInterface>,
