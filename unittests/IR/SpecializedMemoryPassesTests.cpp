@@ -69,12 +69,12 @@ TEST_F(SpecializedRemoveUnusedAllocationsTest, RequiresDiscardableAllocationReso
   ASSERT_TRUE(createArray);
 
   EXPECT_TRUE(
-      detail::hasAllocationEffectOnResource<DiscardableAllocationResource>(
+      llzk::detail::hasAllocationEffectOnResource<DiscardableAllocationResource>(
           createArray.getOperation()
       )
   );
   EXPECT_FALSE(
-      detail::hasAllocationEffectOnResource<NonDiscardableAllocationResource>(
+      llzk::detail::hasAllocationEffectOnResource<NonDiscardableAllocationResource>(
           createArray.getOperation()
       )
   );
