@@ -60,14 +60,24 @@ module attributes {llzk.lang} {
   }
 };
 
-TEST_F(SpecializedRemoveUnusedAllocationsTest, RequiresMatchingAllocationResource) {
+TEST_F(SpecializedRemoveUnusedAllocationsTest, RequiresDiscardableAllocationResource) {
   OwningOpRef<ModuleOp> module = parseModuleWithUnreadArrayWrite();
   ASSERT_TRUE(module);
 
-  runCleanup<NonDiscardableAllocationResource>(*module);
+  CreateArrayOp createArray;
+  module->walk([&](CreateArrayOp op) { createArray = op; });
+  ASSERT_TRUE(createArray);
 
-  EXPECT_EQ(countOps<CreateArrayOp>(*module), 1u);
-  EXPECT_EQ(countOps<WriteArrayOp>(*module), 1u);
+  EXPECT_TRUE(
+      detail::hasAllocationEffectOnResource<DiscardableAllocationResource>(
+          createArray.getOperation()
+      )
+  );
+  EXPECT_FALSE(
+      detail::hasAllocationEffectOnResource<NonDiscardableAllocationResource>(
+          createArray.getOperation()
+      )
+  );
 }
 
 TEST_F(SpecializedRemoveUnusedAllocationsTest, ErasesUnreadDiscardableAllocations) {

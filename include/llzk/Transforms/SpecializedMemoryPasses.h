@@ -32,6 +32,25 @@
 
 namespace llzk {
 
+namespace detail {
+
+/// Returns true when \p op has an allocate effect on \p ResourceTy.
+template <typename ResourceTy> bool hasAllocationEffectOnResource(mlir::Operation *op) {
+  auto effectInterface = llvm::dyn_cast<mlir::MemoryEffectOpInterface>(op);
+  if (!effectInterface) {
+    return false;
+  }
+
+  llvm::SmallVector<mlir::SideEffects::EffectInstance<mlir::MemoryEffects::Effect>, 4> effects;
+  effectInterface.getEffects(effects);
+  return llvm::any_of(effects, [](const auto &effect) {
+    return llvm::isa<mlir::MemoryEffects::Allocate>(effect.getEffect()) &&
+           llvm::isa<ResourceTy>(effect.getResource());
+  });
+}
+
+} // namespace detail
+
 /// A variant of the MLIR `sroa` pass that only destructures memory slots belonging to allocators
 /// of type \p AllocOpTy (which must implement `mlir::DestructurableAllocationOpInterface`). All
 /// other allocator ops are ignored. The rest of the pass body is identical to the upstream pass.
@@ -195,17 +214,7 @@ struct SpecializedRemoveUnusedAllocations
 private:
   /// Returns true when the allocator is explicitly marked as safe for this cleanup pass.
   static bool hasRequiredAllocationEffect(AllocOpTy allocator) {
-    auto effectInterface = llvm::dyn_cast<mlir::MemoryEffectOpInterface>(allocator.getOperation());
-    if (!effectInterface) {
-      return false;
-    }
-
-    llvm::SmallVector<mlir::SideEffects::EffectInstance<mlir::MemoryEffects::Effect>, 4> effects;
-    effectInterface.getEffects(effects);
-    return llvm::any_of(effects, [](const auto &effect) {
-      return llvm::isa<mlir::MemoryEffects::Allocate>(effect.getEffect()) &&
-             llvm::isa<ResourceTy>(effect.getResource());
-    });
+    return detail::hasAllocationEffectOnResource<ResourceTy>(allocator.getOperation());
   }
 
   /// Collects direct write-only users, returning false if any user can read or retain the
