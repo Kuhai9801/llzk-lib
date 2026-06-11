@@ -24,11 +24,6 @@ using namespace llzk::array;
 
 namespace {
 
-struct NonDiscardableAllocationResource
-    : public SideEffects::Resource::Base<NonDiscardableAllocationResource> {
-  StringRef getName() final { return "NonDiscardableAllocation"; }
-};
-
 class SpecializedRemoveUnusedAllocationsTest : public LLZKTest {
 protected:
   OwningOpRef<ModuleOp> parseModuleWithUnreadArrayWrite() {
@@ -74,7 +69,7 @@ TEST_F(SpecializedRemoveUnusedAllocationsTest, RequiresDiscardableAllocationReso
       )
   );
   EXPECT_FALSE(
-      llzk::detail::hasAllocationEffectOnResource<NonDiscardableAllocationResource>(
+      llzk::detail::hasAllocationEffectOnResource<SideEffects::DefaultResource>(
           createArray.getOperation()
       )
   );
