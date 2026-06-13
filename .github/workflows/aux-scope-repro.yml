@@ -52,27 +52,27 @@ jobs:
           cat > "$OUT/fixtures/loop_aux_scope.llzk" <<'EOF'
           module attributes {llzk.lang = "llzk"} {
             struct.def @LoopAuxScope {
-              struct.member @out : !felt.type<"babybear"> {llzk.pub}
+              struct.member @out : !felt.type {llzk.pub}
 
-              function.def @compute(%a: !felt.type<"babybear">) -> !struct.type<@LoopAuxScope> {
+              function.def @compute(%a: !felt.type) -> !struct.type<@LoopAuxScope> {
                 %self = struct.new : !struct.type<@LoopAuxScope>
-                struct.writem %self[@out] = %a : !struct.type<@LoopAuxScope>, !felt.type<"babybear">
+                struct.writem %self[@out] = %a : !struct.type<@LoopAuxScope>, !felt.type
                 function.return %self : !struct.type<@LoopAuxScope>
               }
 
-              function.def @constrain(%self: !struct.type<@LoopAuxScope>, %a: !felt.type<"babybear">) {
+              function.def @constrain(%self: !struct.type<@LoopAuxScope>, %a: !felt.type) {
                 %lb = arith.constant 0 : index
                 %ub = arith.constant 2 : index
                 %step = arith.constant 1 : index
-                %one = felt.const 1 : !felt.type<"babybear">
+                %one = felt.const 1 : !felt.type
 
                 %res = scf.for %iv = %lb to %ub step %step
-                    iter_args(%acc = %a) -> !felt.type<"babybear"> {
-                  %sq = felt.mul %acc, %acc : !felt.type<"babybear">, !felt.type<"babybear">
-                  %cube = felt.mul %sq, %acc : !felt.type<"babybear">, !felt.type<"babybear">
-                  constrain.eq %cube, %cube : !felt.type<"babybear">
-                  %next = felt.add %acc, %one : !felt.type<"babybear">, !felt.type<"babybear">
-                  scf.yield %next : !felt.type<"babybear">
+                    iter_args(%acc = %a) -> !felt.type {
+                  %sq = felt.mul %acc, %acc : !felt.type, !felt.type
+                  %cube = felt.mul %sq, %acc : !felt.type, !felt.type
+                  constrain.eq %cube, %cube : !felt.type
+                  %next = felt.add %acc, %one : !felt.type, !felt.type
+                  scf.yield %next : !felt.type
                 }
 
                 function.return
