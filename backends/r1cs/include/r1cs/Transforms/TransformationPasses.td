@@ -17,8 +17,11 @@ def R1CSLoweringPass : LLZKPass<"llzk-r1cs-lowering"> {
                 "i.e a*b - c = 0";
   let description = [{
     Transforms LLZK constraints into an equivalent set of R1CS constraints expressed in the r1cs dialect.
-    This pass is best used as part of the `-llzk-full-r1cs-lowering` pipeline which includes
-    a degree lowering pass and clean up passes to ensure correctness and performance.
+    The pass expects already-flattened, straight-line `constrain` bodies. Run `llzk-flatten` or
+    another control-flow lowering pass before this pass.
+    This pass is best used on already-flattened input as part of the `-llzk-full-r1cs-lowering`
+    pipeline which includes a degree lowering pass and clean up passes to ensure correctness and
+    performance.
   }];
 }
 
