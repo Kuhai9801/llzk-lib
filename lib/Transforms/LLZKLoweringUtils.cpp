@@ -69,6 +69,7 @@ Value rebuildExprInCompute(
     FuncDefOp targetFunc = target->get();
     bool invalidTarget =
         (targetFunc.hasAllowConstraintAttr() && !computeFunc.hasAllowConstraintAttr()) ||
+        (targetFunc.hasAllowWitnessAttr() && !computeFunc.hasAllowWitnessAttr()) ||
         (targetFunc.hasAllowNonNativeFieldOpsAttr() &&
          !computeFunc.hasAllowNonNativeFieldOpsAttr());
     if (invalidTarget) {
@@ -152,8 +153,10 @@ Value rebuildExprInCompute(
     return memo[val] = builder.create<FeltConstantOp>(c.getLoc(), c.getValueAttr());
   }
 
-  llvm::errs() << "Unhandled op in rebuildExprInCompute: " << val << '\n';
-  llvm_unreachable("Unsupported op kind");
+  if (Operation *op = val.getDefiningOp()) {
+    op->emitError("cannot rebuild unsupported operation in compute-side auxiliary expression");
+  }
+  return nullptr;
 }
 
 LogicalResult checkForAuxMemberConflicts(StructDefOp structDef, StringRef prefix) {

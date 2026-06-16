@@ -24,6 +24,9 @@ struct AuxAssignment {
   mlir::Value computedValue;
 };
 
+/// Rebuilds a straight-line constrain-side felt expression in `computeFunc`.
+/// Block arguments are mapped by constrain entry-block position: argument 0 to
+/// compute `%self`, and later arguments to compute inputs.
 mlir::Value rebuildExprInCompute(
     mlir::Value val, function::FuncDefOp computeFunc, mlir::OpBuilder &builder,
     llvm::DenseMap<mlir::Value, mlir::Value> &memo

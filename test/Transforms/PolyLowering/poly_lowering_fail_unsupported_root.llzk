@@ -16,3 +16,23 @@ module attributes {llzk.lang} {
     }
   }
 }
+
+// -----
+
+module attributes {llzk.lang} {
+  struct.def @UnsupportedNondetAuxRoot {
+    function.def @compute(%a: !felt.type, %b: !felt.type, %out: !felt.type) -> !struct.type<@UnsupportedNondetAuxRoot> {
+      %self = struct.new : !struct.type<@UnsupportedNondetAuxRoot>
+      function.return %self : !struct.type<@UnsupportedNondetAuxRoot>
+    }
+
+    function.def @constrain(%self: !struct.type<@UnsupportedNondetAuxRoot>, %a: !felt.type, %b: !felt.type, %out: !felt.type) {
+      // expected-error@+1 {{cannot rebuild unsupported operation in compute-side auxiliary expression}}
+      %nondet = llzk.nondet : !felt.type
+      %lhs = felt.mul %nondet, %a : !felt.type, !felt.type
+      %rhs = felt.mul %lhs, %b : !felt.type, !felt.type
+      constrain.eq %out, %rhs : !felt.type
+      function.return
+    }
+  }
+}
