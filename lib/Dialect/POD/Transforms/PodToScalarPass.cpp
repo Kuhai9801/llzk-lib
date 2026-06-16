@@ -1673,7 +1673,7 @@ class PassImpl : public llzk::pod::impl::PodToScalarPassBase<PassImpl> {
             .allocatorOpName = NewPodOp::getOperationName().str()
         }
     ));
-    cleanupPM.addPass(createRemoveDeadValuesPass());
+    cleanupPM.addPass(createRemoveDeadValuesWorkaroundPass());
 
     size_t podAllocWeight = podAllocScalarizationWeight(module);
     while (podAllocWeight != 0) {
