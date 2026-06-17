@@ -9,11 +9,14 @@
 //--- repro.llzk
 module attributes {llzk.lang, llzk.main = !struct.type<@CmpConstraint>} {
   struct.def @CmpConstraint {
+    struct.member @out : !felt.type {llzk.pub}
+
     function.def @compute(
       %a: !felt.type {function.arg_name = "a"},
       %b: !felt.type {function.arg_name = "b"}
     ) -> !struct.type<@CmpConstraint> {
       %self = struct.new : !struct.type<@CmpConstraint>
+      struct.writem %self[@out] = %a : !struct.type<@CmpConstraint>, !felt.type
       function.return %self : !struct.type<@CmpConstraint>
     }
 
