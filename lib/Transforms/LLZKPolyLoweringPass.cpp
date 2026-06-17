@@ -24,7 +24,10 @@
 
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseMapInfo.h>
+#include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/StringMap.h>
 #include <llvm/Support/Debug.h>
 
 #include <deque>
@@ -51,6 +54,7 @@ namespace {
 struct AuxAssignment {
   std::string auxMemberName;
   Value computedValue;
+  Value auxValue;
 };
 
 class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
@@ -80,6 +84,106 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
     // nested-region constrain bodies. Within that invariant, same-block order
     // is a sufficient and exact dominance check for values introduced here.
     return defOp->getBlock() == useOp->getBlock() && defOp->isBeforeInBlock(useOp);
+  }
+
+  void addAuxDependency(
+      unsigned dep, unsigned owner, DenseSet<unsigned> &seenDeps, SmallVectorImpl<unsigned> &deps
+  ) const {
+    if (dep == owner) {
+      return;
+    }
+    if (seenDeps.insert(dep).second) {
+      deps.push_back(dep);
+    }
+  }
+
+  void collectAuxDependencies(
+      Value val, unsigned owner, const DenseMap<Value, unsigned> &auxValueToIndex,
+      const llvm::StringMap<unsigned> &auxNameToIndex, DenseSet<Value> &visitedValues,
+      DenseSet<unsigned> &seenDeps, SmallVectorImpl<unsigned> &deps
+  ) const {
+    if (!val || !visitedValues.insert(val).second) {
+      return;
+    }
+
+    if (auto it = auxValueToIndex.find(val); it != auxValueToIndex.end()) {
+      addAuxDependency(it->second, owner, seenDeps, deps);
+    }
+
+    if (auto readOp = val.getDefiningOp<MemberReadOp>()) {
+      auto it = auxNameToIndex.find(readOp.getMemberName());
+      if (it != auxNameToIndex.end()) {
+        addAuxDependency(it->second, owner, seenDeps, deps);
+      }
+    }
+
+    Operation *defOp = val.getDefiningOp();
+    if (!defOp) {
+      return;
+    }
+
+    for (Value operand : defOp->getOperands()) {
+      collectAuxDependencies(
+          operand, owner, auxValueToIndex, auxNameToIndex, visitedValues, seenDeps, deps
+      );
+    }
+  }
+
+  LogicalResult visitAuxAssignment(
+      unsigned idx, ArrayRef<SmallVector<unsigned>> deps, SmallVectorImpl<uint8_t> &visitState,
+      SmallVectorImpl<unsigned> &ordered, ArrayRef<AuxAssignment> auxAssignments
+  ) const {
+    if (visitState[idx] == 2) {
+      return success();
+    }
+    if (visitState[idx] == 1) {
+      return emitError(auxAssignments[idx].computedValue.getLoc())
+             << "poly lowering generated cyclic auxiliary dependency involving @"
+             << auxAssignments[idx].auxMemberName;
+    }
+
+    visitState[idx] = 1;
+    for (unsigned dep : deps[idx]) {
+      if (failed(visitAuxAssignment(dep, deps, visitState, ordered, auxAssignments))) {
+        return failure();
+      }
+    }
+    visitState[idx] = 2;
+    ordered.push_back(idx);
+    return success();
+  }
+
+  LogicalResult orderAuxAssignments(
+      ArrayRef<AuxAssignment> auxAssignments, SmallVectorImpl<unsigned> &ordered
+  ) const {
+    DenseMap<Value, unsigned> auxValueToIndex;
+    llvm::StringMap<unsigned> auxNameToIndex;
+    auxValueToIndex.reserve(auxAssignments.size());
+    auxNameToIndex.reserve(auxAssignments.size());
+    for (auto [idx, assign] : llvm::enumerate(auxAssignments)) {
+      if (assign.auxValue) {
+        auxValueToIndex[assign.auxValue] = idx;
+      }
+      auxNameToIndex[assign.auxMemberName] = idx;
+    }
+
+    SmallVector<SmallVector<unsigned>> deps(auxAssignments.size());
+    for (auto [idx, assign] : llvm::enumerate(auxAssignments)) {
+      DenseSet<Value> visitedValues;
+      DenseSet<unsigned> seenDeps;
+      collectAuxDependencies(
+          assign.computedValue, idx, auxValueToIndex, auxNameToIndex, visitedValues, seenDeps,
+          deps[idx]
+      );
+    }
+
+    SmallVector<uint8_t> visitState(auxAssignments.size(), 0);
+    for (unsigned idx = 0, e = auxAssignments.size(); idx < e; ++idx) {
+      if (failed(visitAuxAssignment(idx, deps, visitState, ordered, auxAssignments))) {
+        return failure();
+      }
+    }
+    return success();
   }
 
   // Recursively compute degree of FeltOps SSA values
@@ -214,7 +318,7 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
         auto auxVal = builder.create<MemberReadOp>(
             lhs.getLoc(), lhs.getType(), selfVal, auxMember.getNameAttr()
         );
-        auxAssignments.push_back({auxName, lhs});
+        auxAssignments.push_back({auxName, lhs, auxVal});
         Location loc = builder.getFusedLoc({auxVal.getLoc(), lhs.getLoc()});
         auto eqOp = builder.create<EmitEqualityOp>(loc, auxVal, lhs);
 
@@ -247,7 +351,7 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
         // Emit constraint: auxVal == toFactor
         Location loc = builder.getFusedLoc({auxVal.getLoc(), toFactor.getLoc()});
         auto eqOp = builder.create<EmitEqualityOp>(loc, auxVal, toFactor);
-        auxAssignments.push_back({auxName, toFactor});
+        auxAssignments.push_back({auxName, toFactor, auxVal});
         // Update memoization
         rewrites[toFactor] = auxVal;
         degreeMemo[auxVal] = 1; // stays same
@@ -309,7 +413,7 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
 
     Location loc = builder.getFusedLoc({auxVal.getLoc(), loweredVal.getLoc()});
     builder.create<EmitEqualityOp>(loc, auxVal, loweredVal);
-    auxAssignments.push_back({auxName, loweredVal});
+    auxAssignments.push_back({auxName, loweredVal, auxVal});
 
     degreeMemo[auxVal] = 1;
     rewrites[loweredVal] = auxVal;
@@ -496,13 +600,24 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
       OpBuilder builder(&computeBlock, computeBlock.getTerminator()->getIterator());
       Value selfVal = computeFunc.getSelfValueFromCompute();
 
-      for (const auto &assign : auxAssignments) {
+      SmallVector<unsigned> orderedAuxAssignments;
+      orderedAuxAssignments.reserve(auxAssignments.size());
+      if (failed(orderAuxAssignments(auxAssignments, orderedAuxAssignments))) {
+        signalPassFailure();
+        return;
+      }
+
+      for (unsigned assignIdx : orderedAuxAssignments) {
+        const auto &assign = auxAssignments[assignIdx];
         Value rebuiltExpr =
             rebuildExprInCompute(assign.computedValue, computeFunc, builder, rebuildMemo);
         builder.create<MemberWriteOp>(
             assign.computedValue.getLoc(), selfVal, builder.getStringAttr(assign.auxMemberName),
             rebuiltExpr
         );
+        if (assign.auxValue) {
+          rebuildMemo[assign.auxValue] = rebuiltExpr;
+        }
       }
     });
   }
