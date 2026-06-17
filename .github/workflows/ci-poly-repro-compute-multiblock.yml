@@ -1,4 +1,4 @@
-name: Poly repro: compute multiblock aux write
+name: "Poly repro: compute multiblock aux write"
 
 on:
   workflow_dispatch:
