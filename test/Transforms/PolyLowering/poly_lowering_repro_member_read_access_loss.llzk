@@ -11,7 +11,7 @@ module attributes {llzk.lang} {
       function.return %self : !struct.type<@TableOffsetAux>
     }
 
-    function.def @constrain(%self: !struct.type<@TableOffsetAux>) {
+    function.def @constrain(%self: !struct.type<@TableOffsetAux>, %x: !felt.type) {
       %prev = struct.readm %self[@x] : !struct.type<@TableOffsetAux>, !felt.type {tableOffset = -1 : index}
       %sq = felt.mul %prev, %prev : !felt.type, !felt.type
       %fourth = felt.mul %sq, %sq : !felt.type, !felt.type
