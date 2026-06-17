@@ -1,0 +1,33 @@
+// RUN: not llzk-opt -I %S -split-input-file -llzk-poly-lowering-pass="max-degree=2" --verify-each %s 2>&1 | FileCheck %s
+
+module attributes {llzk.lang = "llzk"} {
+  struct.def @ComputeMultiBlockAuxWrite {
+    struct.member @out : !felt.type {llzk.pub}
+
+    function.def @compute(%a: !felt.type) -> !struct.type<@ComputeMultiBlockAuxWrite> {
+      %self0 = struct.new : !struct.type<@ComputeMultiBlockAuxWrite>
+      %aa0 = felt.mul %a, %a : !felt.type, !felt.type
+      %aaa0 = felt.mul %aa0, %a : !felt.type, !felt.type
+      struct.writem %self0[@out] = %aaa0 : !struct.type<@ComputeMultiBlockAuxWrite>, !felt.type
+      function.return %self0 : !struct.type<@ComputeMultiBlockAuxWrite>
+
+    ^dead:
+      %self1 = struct.new : !struct.type<@ComputeMultiBlockAuxWrite>
+      %aa1 = felt.mul %a, %a : !felt.type, !felt.type
+      %aaa1 = felt.mul %aa1, %a : !felt.type, !felt.type
+      struct.writem %self1[@out] = %aaa1 : !struct.type<@ComputeMultiBlockAuxWrite>, !felt.type
+      function.return %self1 : !struct.type<@ComputeMultiBlockAuxWrite>
+    }
+
+    function.def @constrain(%self: !struct.type<@ComputeMultiBlockAuxWrite>, %a: !felt.type) {
+      %aa = felt.mul %a, %a : !felt.type, !felt.type
+      %aaa = felt.mul %aa, %a : !felt.type, !felt.type
+      %out = struct.readm %self[@out] : !struct.type<@ComputeMultiBlockAuxWrite>, !felt.type
+      constrain.eq %out, %aaa : !felt.type
+      function.return
+    }
+  }
+}
+
+// CHECK: error:
+// CHECK: dominance

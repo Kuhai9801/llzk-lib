@@ -1,0 +1,21 @@
+// RUN: not llzk-opt -I %S -split-input-file -llzk-poly-lowering-pass="max-degree=2" %s 2>&1 | FileCheck %s
+
+module attributes {llzk.lang} {
+  struct.def @NondetAux {
+    function.def @compute() -> !struct.type<@NondetAux> {
+      %self = struct.new : !struct.type<@NondetAux>
+      function.return %self : !struct.type<@NondetAux>
+    }
+
+    function.def @constrain(%self: !struct.type<@NondetAux>) {
+      %x = llzk.nondet : !felt.type
+      %sq = felt.mul %x, %x : !felt.type, !felt.type
+      %cube = felt.mul %sq, %x : !felt.type, !felt.type
+      constrain.eq %cube, %cube : !felt.type
+      function.return
+    }
+  }
+}
+
+// CHECK: Unhandled op in rebuildExprInCompute
+// CHECK: llzk.nondet

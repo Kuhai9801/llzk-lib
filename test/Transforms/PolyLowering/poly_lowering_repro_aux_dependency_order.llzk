@@ -1,0 +1,42 @@
+// RUN: split-file %s %t
+// RUN: llzk-opt -I %S -split-input-file -llzk-full-poly-lowering="max-degree=3" %t/repro.llzk > %t/lowered.llzk
+// RUN: FileCheck --enable-var-scope --check-prefix=ORDER %s < %t/lowered.llzk
+// RUN: not llzk-witgen %t/lowered.llzk --inputs %t/input.json --uninitialized-behavior=fail 2>&1 | FileCheck --check-prefix=WITGEN %s
+
+// This reproduces the current bug: compute materialization reads aux_1
+// before writing it in the same witness-generation function.
+
+//--- repro.llzk
+module attributes {llzk.lang, llzk.main = !struct.type<@CmpConstraint>} {
+  struct.def @CmpConstraint {
+    function.def @compute(
+      %a: !felt.type {function.arg_name = "a"},
+      %b: !felt.type {function.arg_name = "b"}
+    ) -> !struct.type<@CmpConstraint> {
+      %self = struct.new : !struct.type<@CmpConstraint>
+      function.return %self : !struct.type<@CmpConstraint>
+    }
+
+    function.def @constrain(%self: !struct.type<@CmpConstraint>, %a: !felt.type, %b: !felt.type) {
+      %z = felt.mul %a, %b
+      %zz = felt.mul %z, %z
+      %za = felt.mul %z, %a
+      %za_sq = felt.mul %za, %za
+      constrain.eq %za_sq, %z : !felt.type
+      constrain.eq %zz, %za : !felt.type
+      function.return
+    }
+  }
+}
+
+// ORDER-LABEL: function.def @compute(
+// ORDER:         %[[SELF:.*]] = struct.new : <@CmpConstraint>
+// ORDER-NEXT:    %[[AUX1_OLD:.*]] = struct.readm %[[SELF]][@__llzk_poly_lowering_pass_aux_member_1] : <@CmpConstraint>, !felt.type
+// ORDER-NEXT:    %[[AUX0_VALUE:.*]] = felt.mul %[[AUX1_OLD]],
+// ORDER-NEXT:    struct.writem %[[SELF]][@__llzk_poly_lowering_pass_aux_member_0] = %[[AUX0_VALUE]] : <@CmpConstraint>, !felt.type
+// ORDER:         struct.writem %[[SELF]][@__llzk_poly_lowering_pass_aux_member_1]
+
+// WITGEN: read of uninitialized felt value
+
+//--- input.json
+{"a": 1, "b": 1}

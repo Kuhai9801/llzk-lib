@@ -1,0 +1,32 @@
+// RUN: llzk-opt -I %S -split-input-file -llzk-poly-lowering-pass="max-degree=2" %s | FileCheck --enable-var-scope %s
+
+module attributes {llzk.lang} {
+  struct.def @TableOffsetAux {
+    struct.member @x : !felt.type
+    struct.member @out : !felt.type {llzk.pub}
+
+    function.def @compute(%x: !felt.type) -> !struct.type<@TableOffsetAux> {
+      %self = struct.new : !struct.type<@TableOffsetAux>
+      struct.writem %self[@x] = %x : !struct.type<@TableOffsetAux>, !felt.type
+      function.return %self : !struct.type<@TableOffsetAux>
+    }
+
+    function.def @constrain(%self: !struct.type<@TableOffsetAux>) {
+      %prev = struct.readm %self[@x] : !struct.type<@TableOffsetAux>, !felt.type {tableOffset = -1 : index}
+      %sq = felt.mul %prev, %prev : !felt.type, !felt.type
+      %fourth = felt.mul %sq, %sq : !felt.type, !felt.type
+      %out = struct.readm %self[@out] : !struct.type<@TableOffsetAux>, !felt.type
+      constrain.eq %out, %fourth : !felt.type
+      function.return
+    }
+  }
+}
+
+// CHECK-LABEL: function.def @compute
+// CHECK:         %[[SELF:.*]] = struct.new : <@TableOffsetAux>
+// CHECK:         %[[CUR:.*]] = struct.readm %[[SELF]][@x] : <@TableOffsetAux>, !felt.type
+// CHECK-NOT:     tableOffset
+// CHECK:         struct.writem %[[SELF]][@__llzk_poly_lowering_pass_aux_member_0]
+// CHECK-LABEL: function.def @constrain
+// CHECK:         struct.readm {{.*}}[@x] : <@TableOffsetAux>, !felt.type {tableOffset = -1 : index}
+// CHECK:         constrain.eq {{.*}}@__llzk_poly_lowering_pass_aux_member_0
