@@ -148,12 +148,17 @@ void replaceSubsequentUsesWith(Value oldVal, Value newVal, Operation *afterOp) {
   }
 }
 
-MemberDefOp addAuxMember(StructDefOp structDef, StringRef name) {
+MemberDefOp addAuxMember(StructDefOp structDef, StringRef name, Type type) {
+  assert(type && "auxiliary member type must be non-null");
+
   OpBuilder builder(structDef);
   builder.setInsertionPointToEnd(structDef.getBody());
-  return builder.create<MemberDefOp>(
-      structDef.getLoc(), builder.getStringAttr(name), builder.getType<FeltType>()
-  );
+  return builder.create<MemberDefOp>(structDef.getLoc(), builder.getStringAttr(name), type);
+}
+
+MemberDefOp addAuxMember(StructDefOp structDef, StringRef name) {
+  OpBuilder builder(structDef);
+  return addAuxMember(structDef, name, builder.getType<FeltType>());
 }
 
 unsigned getFeltDegree(Value val, DenseMap<Value, unsigned> &memo) {

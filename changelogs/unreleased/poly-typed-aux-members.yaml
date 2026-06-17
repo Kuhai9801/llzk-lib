@@ -1,0 +1,3 @@
+fixed:
+  - Emit polynomial-lowering auxiliary members with the exact type of the materialized expression
+  - Emit all R1CS-lowering auxiliary members with the exact type of the materialized expression
