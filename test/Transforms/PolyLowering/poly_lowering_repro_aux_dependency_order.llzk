@@ -34,9 +34,9 @@ module attributes {llzk.lang, llzk.main = !struct.type<@CmpConstraint>} {
 
 // ORDER-LABEL: function.def @compute(
 // ORDER:         %[[SELF:.*]] = struct.new : <@CmpConstraint>
-// ORDER-NEXT:    %[[AUX1_OLD:.*]] = struct.readm %[[SELF]][@__llzk_poly_lowering_pass_aux_member_1] : <@CmpConstraint>, !felt.type
-// ORDER-NEXT:    %[[AUX0_VALUE:.*]] = felt.mul %[[AUX1_OLD]],
-// ORDER-NEXT:    struct.writem %[[SELF]][@__llzk_poly_lowering_pass_aux_member_0] = %[[AUX0_VALUE]] : <@CmpConstraint>, !felt.type
+// ORDER:    %[[AUX1_OLD:.*]] = struct.readm %[[SELF]][@__llzk_poly_lowering_pass_aux_member_1] : <@CmpConstraint>, !felt.type
+// ORDER:    %[[AUX0_VALUE:.*]] = felt.mul %[[AUX1_OLD]],
+// ORDER:    struct.writem %[[SELF]][@__llzk_poly_lowering_pass_aux_member_0] = %[[AUX0_VALUE]] : <@CmpConstraint>, !felt.type
 // ORDER:         struct.writem %[[SELF]][@__llzk_poly_lowering_pass_aux_member_1]
 
 // WITGEN: read of uninitialized felt value
