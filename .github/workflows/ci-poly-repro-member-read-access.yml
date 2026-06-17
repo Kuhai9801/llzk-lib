@@ -1,4 +1,4 @@
-name: Poly repro: member read access loss
+name: "Poly repro: member read access loss"
 
 on:
   workflow_dispatch:
