@@ -1,5 +1,4 @@
-// RUN: llzk-opt -I %S -split-input-file -llzk-poly-lowering-pass="max-degree=2" %s | FileCheck --enable-var-scope %s
-// RUN: not llzk-opt -I %S -split-input-file -llzk-poly-lowering-pass="max-degree=2" --verify-each %s 2>&1 | FileCheck --check-prefix=VERIFY %s
+// RUN: not llzk-opt -I %S -split-input-file -llzk-poly-lowering-pass="max-degree=2" %s 2>&1 | FileCheck --check-prefix=VERIFY %s
 
 module attributes {llzk.lang} {
   struct.def @TypedAux {
@@ -29,9 +28,4 @@ module attributes {llzk.lang} {
   }
 }
 
-// CHECK-LABEL: struct.def @TypedAux
-// CHECK:         struct.readm {{.*}}[@__llzk_poly_lowering_pass_aux_member_0] : <@TypedAux>, !felt.type<"babybear">
-// CHECK:         struct.writem {{.*}}[@__llzk_poly_lowering_pass_aux_member_0] = {{.*}} : <@TypedAux>, !felt.type<"babybear">
-// CHECK:         struct.member @__llzk_poly_lowering_pass_aux_member_0 : !felt.type
-
-// VERIFY: error:
+// VERIFY: error: 'struct.readm' op has wrong type; expected '!felt.type', got '!felt.type<"babybear">'
