@@ -99,16 +99,15 @@ LogicalResult checkForAuxMemberConflicts(StructDefOp structDef, StringRef prefix
   return failure(conflictFound);
 }
 
-LogicalResult checkConstrainBodyIsStraightLine(FuncDefOp constrainFunc, StringRef passName) {
-  auto emitStraightLineError = [passName](Operation *op) {
-    op->emitError() << passName
-                    << " expects a straight-line constrain body; run `llzk-flatten` or another "
-                       "control-flow lowering pass first";
+LogicalResult checkFuncBodyIsStraightLine(FuncDefOp func, StringRef passName, StringRef funcName) {
+  auto emitStraightLineError = [passName, funcName](Operation *op) {
+    op->emitError() << passName << " expects a straight-line " << funcName
+                    << " body; run `llzk-flatten` or another control-flow lowering pass first";
   };
 
-  Region &body = constrainFunc.getBody();
+  Region &body = func.getBody();
   if (!body.hasOneBlock()) {
-    emitStraightLineError(constrainFunc.getOperation());
+    emitStraightLineError(func.getOperation());
     return failure();
   }
 
@@ -127,6 +126,10 @@ LogicalResult checkConstrainBodyIsStraightLine(FuncDefOp constrainFunc, StringRe
 
   emitStraightLineError(unsupportedControlFlowOp);
   return failure();
+}
+
+LogicalResult checkConstrainBodyIsStraightLine(FuncDefOp constrainFunc, StringRef passName) {
+  return checkFuncBodyIsStraightLine(constrainFunc, passName, "constrain");
 }
 
 void replaceSubsequentUsesWith(Value oldVal, Value newVal, Operation *afterOp) {

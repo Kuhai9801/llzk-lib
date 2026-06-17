@@ -376,6 +376,11 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
         return;
       }
 
+      if (failed(checkFuncBodyIsStraightLine(computeFunc, "poly lowering", "compute"))) {
+        signalPassFailure();
+        return;
+      }
+
       DenseMap<Value, unsigned> degreeMemo;
       DenseMap<Value, Value> rewrites;
       SmallVector<AuxAssignment> auxAssignments;
