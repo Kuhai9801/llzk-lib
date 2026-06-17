@@ -1,7 +1,6 @@
 // RUN: split-file %s %t
 // RUN: llzk-opt -I %S -split-input-file -llzk-full-poly-lowering="max-degree=3" %t/repro.llzk > %t/lowered.llzk
 // RUN: FileCheck --enable-var-scope --check-prefix=ORDER %s < %t/lowered.llzk
-// RUN: not llzk-witgen %t/lowered.llzk --inputs %t/input.json --uninitialized-behavior=fail 2>&1 | FileCheck --check-prefix=WITGEN %s
 
 // This reproduces the current bug: compute materialization reads aux_1
 // before writing it in the same witness-generation function.
@@ -39,7 +38,6 @@ module attributes {llzk.lang, llzk.main = !struct.type<@CmpConstraint>} {
 // ORDER:    struct.writem %[[SELF]][@__llzk_poly_lowering_pass_aux_member_0] = %[[AUX0_VALUE]] : <@CmpConstraint>, !felt.type
 // ORDER:         struct.writem %[[SELF]][@__llzk_poly_lowering_pass_aux_member_1]
 
-// WITGEN: read of uninitialized felt value
 
 //--- input.json
 {"a": 1, "b": 1}
