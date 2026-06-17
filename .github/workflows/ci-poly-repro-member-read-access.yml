@@ -29,3 +29,45 @@ jobs:
           authToken: '${{ secrets.CACHIX_PUBLIC_TOKEN }}'
       - name: Build and run repro lit tests
         run: nix --print-build-logs build '.#debugGCC'
+      - name: Capture downstream proof
+        run: |
+          set -euo pipefail
+          mkdir -p proof
+          input='test/Transforms/PolyLowering/poly_lowering_repro_member_read_access_loss.llzk'
+          opt='result/bin/llzk-opt'
+
+          "$opt" -I test/Transforms/PolyLowering -split-input-file \
+            -llzk-poly-lowering-pass='max-degree=2' "$input" \
+            > proof/poly-lowered.llzk
+
+          awk '/function.def @compute/,/function.return/' proof/poly-lowered.llzk > proof/compute-region.llzk
+          awk '/function.def @constrain/,/function.return/' proof/poly-lowered.llzk > proof/constrain-region.llzk
+
+          grep -F '[@x]' proof/compute-region.llzk > proof/compute-x-read.txt
+          if grep -F 'tableOffset' proof/compute-x-read.txt; then
+            echo 'unexpected tableOffset preserved on compute aux producer' >&2
+            exit 1
+          fi
+          grep -F '[@x]' proof/constrain-region.llzk | grep -F 'tableOffset = -1 : index' > proof/constrain-offset-read.txt
+          grep -F '[@__llzk_poly_lowering_pass_aux_member_0]' proof/compute-region.llzk > proof/compute-aux-access.txt
+          grep -F '[@__llzk_poly_lowering_pass_aux_member_0]' proof/constrain-region.llzk > proof/constrain-aux-access.txt
+
+          "$opt" -I test/Transforms/PolyLowering -split-input-file \
+            -llzk-poly-lowering-pass='max-degree=2' \
+            --llzk-compute-constrain-to-product='root-struct=TableOffsetAux' \
+            --llzk-to-smt-no-cf='field=babybear' "$input" \
+            > proof/downstream-smt.mlir
+          grep -F 'smt.assert' proof/downstream-smt.mlir > proof/downstream-smt-asserts.txt
+
+          echo '=== compute reads current x while producing aux ==='
+          cat proof/compute-x-read.txt
+          echo '=== constrain reads prior-row x while consuming same aux ==='
+          cat proof/constrain-offset-read.txt
+          echo '=== downstream SMT assertions were emitted from the mismatched lowered artifact ==='
+          head -n 20 proof/downstream-smt-asserts.txt
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: poly-repro-member-read-access-proof
+          path: proof/**
