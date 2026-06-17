@@ -146,8 +146,7 @@ LogicalResult checkForAuxMemberConflicts(StructDefOp structDef, StringRef prefix
   return failure(conflictFound);
 }
 
-LogicalResult
-checkFuncBodyIsStraightLine(FuncDefOp func, StringRef passName, StringRef funcName) {
+LogicalResult checkFuncBodyIsStraightLine(FuncDefOp func, StringRef passName, StringRef funcName) {
   auto emitStraightLineError = [passName, funcName](Operation *op) {
     op->emitError() << passName << " expects a straight-line " << funcName
                     << " body; run `llzk-flatten` or another control-flow lowering pass first";

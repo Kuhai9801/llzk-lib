@@ -25,8 +25,8 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/ADT/DenseSet.h>
-#include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/Support/Debug.h>
 
@@ -390,11 +390,9 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
       DenseMap<Value, unsigned> &degreeMemo, DenseMap<Value, Value> &rewrites,
       SmallVector<AuxAssignment> &auxAssignments
   ) {
-    Value loweredVal =
-        lowerExpression(
-            val, structDef, constrainFunc, callOp.getOperation(), degreeMemo, rewrites,
-            auxAssignments
-        );
+    Value loweredVal = lowerExpression(
+        val, structDef, constrainFunc, callOp.getOperation(), degreeMemo, rewrites, auxAssignments
+    );
     DenseMap<Value, unsigned> checkMemo;
     if (getDegree(loweredVal, checkMemo) <= 1) {
       return loweredVal;
