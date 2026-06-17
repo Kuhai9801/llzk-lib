@@ -29,3 +29,31 @@ jobs:
           authToken: '${{ secrets.CACHIX_PUBLIC_TOKEN }}'
       - name: Build and run repro lit tests
         run: nix --print-build-logs build '.#debugGCC'
+      - name: Capture verifier rejection proof
+        run: |
+          set -euo pipefail
+          mkdir -p proof
+          input='test/Transforms/PolyLowering/poly_lowering_repro_typed_aux_member.llzk'
+          opt='result/bin/llzk-opt'
+
+          set +e
+          "$opt" -I test/Transforms/PolyLowering -split-input-file \
+            -llzk-poly-lowering-pass='max-degree=2' "$input" \
+            > proof/stdout.llzk 2> proof/stderr.txt
+          status="$?"
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo 'expected verifier rejection, but poly lowering succeeded' >&2
+            exit 1
+          fi
+          grep -F "'struct.readm' op has wrong type; expected '!felt.type', got '!felt.type<\"babybear\">'" proof/stderr.txt \
+            > proof/verifier-error.txt
+
+          echo '=== verifier rejects the typed lowered artifact ==='
+          cat proof/verifier-error.txt
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: poly-repro-typed-aux-proof
+          path: proof/**
