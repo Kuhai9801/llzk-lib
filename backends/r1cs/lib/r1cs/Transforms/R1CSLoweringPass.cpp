@@ -532,7 +532,7 @@ class PassImpl : public r1cs::impl::R1CSLoweringPassBase<PassImpl> {
       // Entire linear combination was zero
       result = builder.create<r1cs::ConstOp>(
           loc, r1cs::LinearType::get(builder.getContext()),
-          r1cs::FeltAttr::get(builder.getContext(), 0)
+          r1cs::FeltAttr::get(builder.getContext(), toAPSInt(lc.constant))
       );
     }
 
