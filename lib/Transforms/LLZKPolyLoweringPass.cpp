@@ -131,6 +131,7 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
     }
 
     auto cacheIdentityRewriteIfAbsent = [&]() {
+      // Keep an existing cached aux replacement for later uses it may dominate.
       if (!rewrites.contains(val)) {
         rewrites[val] = val;
       }
