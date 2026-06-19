@@ -138,6 +138,8 @@ private:
   /// Visit `op` during initialization using the upstream path whenever possible.
   mlir::LogicalResult visitOperationDuringInitialization(mlir::Operation *op) {
     if (op->getNumResults() == 0) {
+      // Preserve LLZK's zero-result transfer behavior for live effect ops such as
+      // constraints, assertions, and writes.
       return visitZeroResultOperation(op);
     }
     return Base::visit(getProgramPointAfter(op));
@@ -180,12 +182,8 @@ private:
       return mlir::success();
     }
 
-    // For an interprocedural no-result call, upstream sparse analysis would use
-    // PredecessorState to propagate return operands into result lattices. There
-    // are no result lattices here, but keeping this dependency mirrors the old
-    // LLZK port's call-handling path and lets later PredecessorState updates
-    // revisit the call site if needed. The typed operation transfer hook is
-    // still deliberately skipped for calls.
+    // Internal zero-result calls have no result lattices, but keep a callgraph
+    // dependency so later predecessor updates can revisit the call site.
     mlir::Operation *callOp = call.getOperation();
     (void)getOrCreateFor<mlir::dataflow::PredecessorState>(
         getProgramPointAfter(callOp), getProgramPointAfter(callOp)
