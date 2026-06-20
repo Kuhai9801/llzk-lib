@@ -15,6 +15,7 @@
 #include "llzk/Analysis/CallGraphAnalyses.h"
 #include "llzk/Dialect/Bool/IR/Ops.h"
 #include "llzk/Dialect/Constrain/IR/Ops.h"
+#include "llzk/Dialect/LLZK/IR/Ops.h"
 #include "llzk/Dialect/Struct/IR/Dialect.h"
 #include "llzk/Transforms/LLZKTransformationPasses.h"
 #include "llzk/Util/SymbolHelper.h"
@@ -148,8 +149,9 @@ template <> struct DenseMapInfo<OperationComparator> {
 
 namespace {
 
-class RedundantOperationEliminationPass
-    : public llzk::impl::RedundantOperationEliminationPassBase<RedundantOperationEliminationPass> {
+class PassImpl : public llzk::impl::RedundantOperationEliminationPassBase<PassImpl> {
+  using Base = RedundantOperationEliminationPassBase<PassImpl>;
+  using Base::Base;
 
   void runOnOperation() override {
     SymbolTableCollection symbolTables;
@@ -220,15 +222,17 @@ class RedundantOperationEliminationPass
 
       // Case 2: An equivalent operation A has already been performed before
       // the current operation B and A dominates B.
-      OperationComparator comp(op, map);
-      if (auto it = uniqueOps.find(comp);
-          it != uniqueOps.end() && domInfo.dominates(it->getOp(), op)) {
-        redundantOps.push_back(op);
-        for (unsigned opNum = 0; opNum < op->getNumResults(); opNum++) {
-          map[op->getResult(opNum)] = it->getOp()->getResult(opNum);
+      if (!isa<NonDetOp>(op)) {
+        OperationComparator comp(op, map);
+        if (auto it = uniqueOps.find(comp);
+            it != uniqueOps.end() && domInfo.dominates(it->getOp(), op)) {
+          redundantOps.push_back(op);
+          for (unsigned opNum = 0; opNum < op->getNumResults(); opNum++) {
+            map[op->getResult(opNum)] = it->getOp()->getResult(opNum);
+          }
+        } else {
+          uniqueOps.insert(comp);
         }
-      } else {
-        uniqueOps.insert(comp);
       }
 
       return WalkResult::advance();
@@ -281,7 +285,3 @@ class RedundantOperationEliminationPass
 };
 
 } // namespace
-
-std::unique_ptr<mlir::Pass> llzk::createRedundantOperationEliminationPass() {
-  return std::make_unique<RedundantOperationEliminationPass>();
-};

@@ -24,6 +24,20 @@ using OpBuilderT = OpBuilder;
 
 namespace {
 
+/// Wraps an insertion point.
+static MlirOpBuilderInsertPoint wrapInsertPoint(OpBuilder::InsertPoint point) {
+  auto *block = point.getBlock();
+  if (!block) {
+    return {.block = {.ptr = nullptr}, .point = {.ptr = nullptr}};
+  }
+
+  if (point.getPoint() == block->end()) {
+    return {.block = wrap(block), .point = {.ptr = nullptr}};
+  }
+
+  return {.block = wrap(block), .point = wrap(&*point.getPoint())};
+}
+
 /// Concrete implementation of `mlir::OpBuilder::Listener` that delegates
 /// notifications to user-supplied C callbacks.
 class ListenerT : public OpBuilder::Listener {
@@ -34,16 +48,18 @@ public:
   /// Called after an operation is inserted. Wraps `op` and the previous insert
   /// point and forwards them to the `MlirNotifyOperationInserted` callback.
   void notifyOperationInserted(Operation *op, OpBuilder::InsertPoint previous) final {
-    MlirOpBuilderInsertPoint i {
-        .block = wrap(previous.getBlock()), .point = wrap(&*previous.getPoint())
-    };
-    opInsertedCb(wrap(op), i, userData);
+    opInsertedCb(wrap(op), wrapInsertPoint(previous), userData);
   }
 
   /// Called after a block is inserted. Wraps `block`, `previous` region, and the
   /// iterator position, then forwards them to the `MlirNotifyBlockInserted` callback.
   void notifyBlockInserted(Block *block, Region *previous, Region::iterator previousIt) final {
-    blockInsertedCb(wrap(block), wrap(previous), wrap(&*previousIt), userData);
+    blockInsertedCb(
+        wrap(block), wrap(previous),
+        (!previous || previous->end() == previousIt) ? MlirBlock {.ptr = nullptr}
+                                                     : wrap(&*previousIt),
+        userData
+    );
   }
 
 private:
@@ -84,6 +100,49 @@ MlirContext mlirOpBuilderGetContext(MlirOpBuilder builder) {
 /// that subsequent insertions prepend to that block.
 void mlirOpBuilderSetInsertionPointToStart(MlirOpBuilder builder, MlirBlock block) {
   unwrap(builder)->setInsertionPointToStart(unwrap(block));
+}
+
+/// Sets the insertion point to the end of the given block.
+void mlirOpBuilderSetInsertionPointToEnd(MlirOpBuilder builder, MlirBlock block) {
+  unwrap(builder)->setInsertionPointToEnd(unwrap(block));
+}
+
+/// Sets the insertion point right before the given operation.
+void mlirOpBuilderSetInsertionPoint(MlirOpBuilder builder, MlirOperation operation) {
+  unwrap(builder)->setInsertionPoint(unwrap(operation));
+}
+
+/// Sets the insertion point right after the given operation.
+void mlirOpBuilderSetInsertionPointAfter(MlirOpBuilder builder, MlirOperation operation) {
+  unwrap(builder)->setInsertionPointAfter(unwrap(operation));
+}
+
+/// Sets the insertion point right after the given value is defined.
+void mlirOpBuilderSetInsertionPointAfterValue(MlirOpBuilder builder, MlirValue value) {
+  unwrap(builder)->setInsertionPointAfterValue(unwrap(value));
+}
+
+/// Return a saved insertion point.
+MlirOpBuilderInsertPoint mlirOpBuilderSaveInsertionPoint(MlirOpBuilder builder) {
+  return wrapInsertPoint(unwrap(builder)->saveInsertionPoint());
+}
+
+/// Restore the insert point to a previously saved point.
+void mlirOpBuilderRestoreInsertionPoint(MlirOpBuilder builder, MlirOpBuilderInsertPoint rawIp) {
+  auto *block = unwrap(rawIp.block);
+  if (!block) {
+    OpBuilderT::InsertPoint ip;
+    unwrap(builder)->restoreInsertionPoint(ip);
+  } else {
+    Block::iterator it = rawIp.point.ptr ? Block::iterator(unwrap(rawIp.point)) : block->end();
+    OpBuilderT::InsertPoint ip(block, it);
+    unwrap(builder)->restoreInsertionPoint(ip);
+  }
+}
+
+/// Reset the insertion point to no location.
+void mlirOpBuilderClearInsertionPoint(MlirOpBuilder builder) {
+  unwrap(builder)->clearInsertionPoint();
 }
 
 /// Returns the operation before which new operations will be inserted, or a null `MlirOperation` if

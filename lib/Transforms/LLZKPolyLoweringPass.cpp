@@ -32,7 +32,6 @@
 
 // Include the generated base pass class definitions.
 namespace llzk {
-#define GEN_PASS_DECL_POLYLOWERINGPASS
 #define GEN_PASS_DEF_POLYLOWERINGPASS
 #include "llzk/Transforms/LLZKTransformationPasses.h.inc"
 } // namespace llzk
@@ -54,11 +53,10 @@ struct AuxAssignment {
   Value computedValue;
 };
 
-class PolyLoweringPass : public llzk::impl::PolyLoweringPassBase<PolyLoweringPass> {
-public:
-  void setMaxDegree(unsigned degree) { this->maxDegree = degree; }
+class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
+  using Base = PolyLoweringPassBase<PassImpl>;
+  using Base::Base;
 
-private:
   unsigned auxCounter = 0;
 
   void collectStructDefs(ModuleOp modOp, SmallVectorImpl<StructDefOp> &structDefs) {
@@ -121,6 +119,47 @@ private:
       return val;
     }
 
+    // Degree-neutral roots can still contain over-degree operands.
+    auto lowerBinaryRoot = [&](auto op) -> Value {
+      Value lhs = lowerExpression(
+          op.getLhs(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
+      );
+      Value rhs = lowerExpression(
+          op.getRhs(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
+      );
+
+      if (lhs != op.getLhs()) {
+        op.getLhsMutable().set(lhs);
+      }
+      if (rhs != op.getRhs()) {
+        op.getRhsMutable().set(rhs);
+      }
+      degreeMemo[val] = std::max(getDegree(lhs, degreeMemo), getDegree(rhs, degreeMemo));
+      rewrites[val] = val;
+      return val;
+    };
+
+    if (auto addOp = val.getDefiningOp<AddFeltOp>()) {
+      return lowerBinaryRoot(addOp);
+    }
+
+    if (auto subOp = val.getDefiningOp<SubFeltOp>()) {
+      return lowerBinaryRoot(subOp);
+    }
+
+    if (auto negOp = val.getDefiningOp<NegFeltOp>()) {
+      Value operand = lowerExpression(
+          negOp.getOperand(), structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
+      );
+
+      if (operand != negOp.getOperand()) {
+        negOp.getOperandMutable().set(operand);
+      }
+      degreeMemo[val] = getDegree(operand, degreeMemo);
+      rewrites[val] = val;
+      return val;
+    }
+
     if (auto mulOp = val.getDefiningOp<MulFeltOp>()) {
       // Recursively lower operands first
       Value lhs = lowerExpression(
@@ -139,7 +178,7 @@ private:
       // Optimization: If lhs == rhs, factor it only once
       if (lhs == rhs && eraseMul) {
         std::string auxName = AUXILIARY_MEMBER_PREFIX + std::to_string(this->auxCounter++);
-        MemberDefOp auxMember = addAuxMember(structDef, auxName);
+        MemberDefOp auxMember = addAuxMember(structDef, auxName, lhs.getType());
 
         auto auxVal = builder.create<MemberReadOp>(
             lhs.getLoc(), lhs.getType(), selfVal, auxMember.getNameAttr()
@@ -167,7 +206,7 @@ private:
 
         // Create auxiliary member for toFactor
         std::string auxName = AUXILIARY_MEMBER_PREFIX + std::to_string(this->auxCounter++);
-        MemberDefOp auxMember = addAuxMember(structDef, auxName);
+        MemberDefOp auxMember = addAuxMember(structDef, auxName, toFactor.getType());
 
         // Read back as MemberReadOp (new SSA value)
         auto auxVal = builder.create<MemberReadOp>(
@@ -206,9 +245,92 @@ private:
       return mulVal;
     }
 
-    // For non-mul ops, leave untouched (they're degree-1 safe)
+    // Unsupported roots are left unchanged.
     rewrites[val] = val;
     return val;
+  }
+
+  Value materializeCallArgument(
+      Value val, StructDefOp structDef, FuncDefOp constrainFunc, CallOp callOp,
+      DenseMap<Value, unsigned> &degreeMemo, DenseMap<Value, Value> &rewrites,
+      SmallVector<AuxAssignment> &auxAssignments
+  ) {
+    Value loweredVal =
+        lowerExpression(val, structDef, constrainFunc, degreeMemo, rewrites, auxAssignments);
+    DenseMap<Value, unsigned> checkMemo;
+    if (getDegree(loweredVal, checkMemo) <= 1) {
+      return loweredVal;
+    }
+
+    // Callees only receive SSA values, not the caller expression tree, so nonlinear
+    // call arguments must be represented by an auxiliary member read.
+    std::string auxName = AUXILIARY_MEMBER_PREFIX + std::to_string(this->auxCounter++);
+    MemberDefOp auxMember = addAuxMember(structDef, auxName, loweredVal.getType());
+
+    OpBuilder builder(callOp);
+    Value selfVal = constrainFunc.getSelfValueFromConstrain();
+    auto auxVal = builder.create<MemberReadOp>(
+        loweredVal.getLoc(), loweredVal.getType(), selfVal, auxMember.getNameAttr()
+    );
+
+    Location loc = builder.getFusedLoc({auxVal.getLoc(), loweredVal.getLoc()});
+    builder.create<EmitEqualityOp>(loc, auxVal, loweredVal);
+    auxAssignments.push_back({auxName, loweredVal});
+
+    degreeMemo[auxVal] = 1;
+    rewrites[loweredVal] = auxVal;
+    rewrites[val] = auxVal;
+    return auxVal;
+  }
+
+  LogicalResult checkEqualityDegrees(FuncDefOp constrainFunc) {
+    bool failedCheck = false;
+
+    constrainFunc.walk([&](EmitEqualityOp eqOp) {
+      DenseMap<Value, unsigned> checkMemo;
+      unsigned lhsDegree = getDegree(eqOp.getLhs(), checkMemo);
+      unsigned rhsDegree = getDegree(eqOp.getRhs(), checkMemo);
+
+      if (lhsDegree > maxDegree || rhsDegree > maxDegree) {
+        auto diag = eqOp.emitOpError();
+        diag << "poly lowering postcondition failed: equality operand degree exceeds max-degree "
+             << maxDegree.getValue() << " (lhs degree " << lhsDegree << ", rhs degree " << rhsDegree
+             << ")";
+        diag.report();
+        failedCheck = true;
+      }
+    });
+
+    return failure(failedCheck);
+  }
+
+  LogicalResult checkStructConstrainCallArguments(FuncDefOp constrainFunc) {
+    bool failedCheck = false;
+
+    constrainFunc.walk([&](CallOp callOp) {
+      if (!callOp.calleeIsStructConstrain()) {
+        return;
+      }
+
+      for (Value arg : callOp.getArgOperands()) {
+        if (!llvm::isa<FeltType>(arg.getType())) {
+          continue;
+        }
+
+        DenseMap<Value, unsigned> checkMemo;
+        unsigned argDegree = getDegree(arg, checkMemo);
+        if (argDegree > 1) {
+          auto diag = callOp.emitOpError();
+          diag << "poly lowering postcondition failed: struct constrain call argument degree "
+                  "exceeds 1 (argument degree "
+               << argDegree << ")";
+          diag.report();
+          failedCheck = true;
+        }
+      }
+    });
+
+    return failure(failedCheck);
   }
 
   void runOnOperation() override {
@@ -245,6 +367,11 @@ private:
       }
 
       if (failed(checkForAuxMemberConflicts(structDef, AUXILIARY_MEMBER_PREFIX))) {
+        signalPassFailure();
+        return;
+      }
+
+      if (failed(checkConstrainBodyIsStraightLine(constrainFunc, "poly lowering"))) {
         signalPassFailure();
         return;
       }
@@ -291,13 +418,17 @@ private:
           bool modified = false;
 
           for (Value &arg : newOperands) {
-            unsigned deg = getDegree(arg, degreeMemo);
+            if (!llvm::isa<FeltType>(arg.getType())) {
+              continue;
+            }
+
+            DenseMap<Value, unsigned> callMemo;
+            unsigned deg = getDegree(arg, callMemo);
 
             if (deg > 1) {
-              Value loweredArg = lowerExpression(
-                  arg, structDef, constrainFunc, degreeMemo, rewrites, auxAssignments
+              arg = materializeCallArgument(
+                  arg, structDef, constrainFunc, callOp, degreeMemo, rewrites, auxAssignments
               );
-              arg = loweredArg;
               modified = true;
             }
           }
@@ -313,6 +444,16 @@ private:
           }
         }
       });
+
+      if (failed(checkEqualityDegrees(constrainFunc))) {
+        signalPassFailure();
+        return;
+      }
+
+      if (failed(checkStructConstrainCallArguments(constrainFunc))) {
+        signalPassFailure();
+        return;
+      }
 
       DenseMap<Value, Value> rebuildMemo;
       Block &computeBlock = computeFunc.getBody().front();
@@ -330,14 +471,5 @@ private:
     });
   }
 };
+
 } // namespace
-
-std::unique_ptr<mlir::Pass> llzk::createPolyLoweringPass() {
-  return std::make_unique<PolyLoweringPass>();
-};
-
-std::unique_ptr<mlir::Pass> llzk::createPolyLoweringPass(unsigned maxDegree) {
-  auto pass = std::make_unique<PolyLoweringPass>();
-  static_cast<PolyLoweringPass *>(pass.get())->setMaxDegree(maxDegree);
-  return pass;
-}

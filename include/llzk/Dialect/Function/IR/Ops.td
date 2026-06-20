@@ -16,6 +16,7 @@
 #define LLZK_FUNC_OPS
 
 include "llzk/Dialect/Function/IR/Dialect.td"
+include "llzk/Dialect/Verif/IR/OpInterfaces.td"
 include "llzk/Dialect/Shared/OpTraits.td"
 include "llzk/Dialect/Shared/Types.td"
 
@@ -36,11 +37,12 @@ class FunctionDialectOp<string mnemonic, list<Trait> traits = []>
 
 def FuncDefOp
     : FunctionDialectOp<
-          "def",
-          [ParentOneOf<["::mlir::ModuleOp", "::llzk::component::StructDefOp",
-                        "::llzk::polymorphic::TemplateOp"]>,
-           DeclareOpInterfaceMethods<SymbolUserOpInterface>, AffineScope,
-           AutomaticAllocationScope, FunctionOpInterface, IsolatedFromAbove]> {
+          "def", [ParentOneOf<["::mlir::ModuleOp",
+                               "::llzk::component::StructDefOp",
+                               "::llzk::polymorphic::TemplateOp"]>,
+                  DeclareOpInterfaceMethods<SymbolUserOpInterface>, AffineScope,
+                  AutomaticAllocationScope, FunctionOpInterface,
+                  IsolatedFromAbove, ContractTarget]> {
   // NOTE: Cannot have SymbolTable trait because that would cause global
   // functions without a body to produce "Operations with a 'SymbolTable' must
   // have exactly one block"
@@ -68,6 +70,11 @@ def FuncDefOp
     names for generated arguments, such as `input[0]` for array elements or
     `self.member` for struct members.
 
+    Function results may similarly carry an optional `function.res_name`
+    attribute. The value must be a non-empty, untyped `StringAttr`, all attached
+    result names must be unique within the function, and the attribute is only
+    valid on function results.
+
     Example:
 
     ```llzk
@@ -79,7 +86,8 @@ def FuncDefOp
 
     // A function that returns its argument twice:
     function.def @count(%x: !felt.type {function.arg_name = "x"})
-        -> (!felt.type, !felt.type) {
+        -> (!felt.type {function.res_name = "first"},
+            !felt.type {function.res_name = "second"}) {
       function.return %x, %x: !felt.type, !felt.type
     }
 

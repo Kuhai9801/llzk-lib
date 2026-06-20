@@ -330,6 +330,7 @@ static llvm::Error finalizeExecutionEngineModule(ModuleOp moduleOp) {
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::memref::createExpandStridedMetadataPass());
   pm.addPass(mlir::createLowerAffinePass());
+  pm.addPass(mlir::createConvertSCFToCFPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createConvertToLLVMPass());
@@ -347,7 +348,7 @@ static void maybeDumpModule(ModuleOp moduleOp, bool enabled, llvm::StringRef tit
   }
   llvm::errs() << title << ":\n";
   moduleOp.print(llvm::errs());
-  llvm::errs() << "\n";
+  llvm::errs() << '\n';
 }
 
 } // namespace

@@ -69,6 +69,56 @@ verifyTypeResolution(SymbolTableCollection &tables, Operation *origin, FunctionT
       tables, origin, ArrayRef<ArrayRef<Type>> {funcType.getInputs(), funcType.getResults()}
   );
 }
+
+/// Verify the name attributes on function arguments or results.
+/// ownAttrName/ownLabel describe the attribute valid on this side (e.g. RES_NAME_ATTR_NAME /
+/// "result"), while crossAttrName/crossLabel describe the attribute that belongs on the other
+/// side and must not appear here.
+static LogicalResult verifyArgOrResNameAttrs(
+    ArrayAttr attrs, StringRef ownAttrName, StringRef crossAttrName, StringRef ownLabel,
+    StringRef crossLabel, EmitErrorFn emitFn
+) {
+  if (!attrs) {
+    return success();
+  }
+  llvm::DenseSet<StringAttr> seenNames;
+  for (auto [i, attr] : llvm::enumerate(attrs)) {
+    auto dictAttr = llvm::dyn_cast<DictionaryAttr>(attr);
+    if (!dictAttr) {
+      continue;
+    }
+    if (dictAttr.contains(crossAttrName)) {
+      return emitFn().append(
+          '\'', crossAttrName, "' is only valid on function ", crossLabel, "s but found on ",
+          ownLabel, ' ', i
+      );
+    }
+    Attribute nameAttr = dictAttr.get(ownAttrName);
+    if (!nameAttr) {
+      continue;
+    }
+    auto name = llvm::dyn_cast<StringAttr>(nameAttr);
+    if (!name) {
+      return emitFn().append(
+          '\'', ownAttrName, "' on ", ownLabel, ' ', i, " must be a string attribute"
+      );
+    }
+    if (!llvm::isa<NoneType>(name.getType())) {
+      return emitFn().append(
+          '\'', ownAttrName, "' on ", ownLabel, ' ', i, " must not have an explicit type"
+      );
+    }
+    if (name.getValue().empty()) {
+      return emitFn().append('\'', ownAttrName, "' on ", ownLabel, ' ', i, " must not be empty");
+    }
+    if (!seenNames.insert(name).second) {
+      return emitFn().append(
+          "duplicate '", ownAttrName, "' value \"", name.getValue(), "\" on ", ownLabel, ' ', i
+      );
+    }
+  }
+  return success();
+}
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -267,48 +317,24 @@ LogicalResult FuncDefOp::verify() {
   OwningEmitErrorFn emitErrorFunc = getEmitOpErrFn(this);
 
   if ((*this)->hasAttr(ARG_NAME_ATTR_NAME)) {
-    return emitOpError() << "'" << ARG_NAME_ATTR_NAME << "' is only valid on function arguments";
+    return emitErrorFunc() << '\'' << ARG_NAME_ATTR_NAME << "' is only valid on function arguments";
+  }
+  if ((*this)->hasAttr(RES_NAME_ATTR_NAME)) {
+    return emitErrorFunc() << '\'' << RES_NAME_ATTR_NAME << "' is only valid on function results";
   }
 
-  if (ArrayAttr resAttrs = getAllResultAttrs()) {
-    for (auto [i, attr] : llvm::enumerate(resAttrs)) {
-      auto dictAttr = llvm::dyn_cast<DictionaryAttr>(attr);
-      if (dictAttr && dictAttr.contains(ARG_NAME_ATTR_NAME)) {
-        return emitOpError() << "'" << ARG_NAME_ATTR_NAME
-                             << "' is only valid on function arguments but found on result " << i;
-      }
-    }
+  if (failed(verifyArgOrResNameAttrs(
+          getAllResultAttrs(), RES_NAME_ATTR_NAME, ARG_NAME_ATTR_NAME, "result", "argument",
+          emitErrorFunc
+      ))) {
+    return failure();
   }
 
-  if (ArrayAttr argAttrs = getAllArgAttrs()) {
-    llvm::DenseSet<StringAttr> seenNames;
-    for (auto [i, attr] : llvm::enumerate(argAttrs)) {
-      auto dictAttr = llvm::dyn_cast<DictionaryAttr>(attr);
-      if (!dictAttr) {
-        continue;
-      }
-      Attribute argNameAttr = dictAttr.get(ARG_NAME_ATTR_NAME);
-      if (!argNameAttr) {
-        continue;
-      }
-      auto argName = llvm::dyn_cast<StringAttr>(argNameAttr);
-      if (!argName) {
-        return emitOpError() << "'" << ARG_NAME_ATTR_NAME << "' on argument " << i
-                             << " must be a string attribute";
-      }
-      if (!llvm::isa<NoneType>(argName.getType())) {
-        return emitOpError() << "'" << ARG_NAME_ATTR_NAME << "' on argument " << i
-                             << " must not have an explicit type";
-      }
-      if (argName.getValue().empty()) {
-        return emitOpError() << "'" << ARG_NAME_ATTR_NAME << "' on argument " << i
-                             << " must not be empty";
-      }
-      if (!seenNames.insert(argName).second) {
-        return emitOpError() << "duplicate '" << ARG_NAME_ATTR_NAME << "' value \""
-                             << argName.getValue() << "\" on argument " << i;
-      }
-    }
+  if (failed(verifyArgOrResNameAttrs(
+          getAllArgAttrs(), ARG_NAME_ATTR_NAME, RES_NAME_ATTR_NAME, "argument", "result",
+          emitErrorFunc
+      ))) {
+    return failure();
   }
 
   // Ensure that only valid LLZK types are used for arguments and return. Additionally, the struct
@@ -526,7 +552,7 @@ LogicalResult CallOp::readProperties(DialectBytecodeReader &reader, OperationSta
   return success();
 }
 
-// Same as tablegen would generate to serialize version 2 IR.
+// Same as tablegen would generate to serialize current version IR.
 void CallOp::writeProperties(DialectBytecodeWriter &writer) {
   auto &prop = getProperties();
   writer.writeAttribute(prop.callee);
@@ -546,20 +572,6 @@ void CallOp::writeProperties(DialectBytecodeWriter &writer) {
   }
 }
 
-static void addTemplateParams(
-    OpBuilder &odsBuilder, CallOp::Properties &props, ArrayRef<Attribute> templateParams
-) {
-  if (!templateParams.empty()) {
-    // Must attempt to convert attribute types but `build()` functions do not have a failure path or
-    // error reporting. That comes during validation of the constructed op so ignore errors here.
-    FailureOr<SmallVector<Attribute>> r = llzk::forceIntAttrTypes(templateParams, [&odsBuilder]() {
-      return InFlightDiagnosticWrapper::createSilent(odsBuilder.getContext());
-    });
-    ArrayRef<Attribute> converted = succeeded(r) ? r.value() : templateParams;
-    props.setTemplateParams(odsBuilder.getArrayAttr(converted));
-  }
-}
-
 void CallOp::build(
     OpBuilder &odsBuilder, OperationState &odsState, TypeRange resultTypes, SymbolRefAttr callee,
     ValueRange argOperands, ArrayRef<Attribute> templateParams
@@ -570,7 +582,7 @@ void CallOp::build(
       odsBuilder, odsState, llzk::checkedCast<int32_t>(argOperands.size())
   );
   props.setCallee(callee);
-  addTemplateParams(odsBuilder, props, templateParams);
+  addTemplateParams<CallOp>(odsBuilder, props, templateParams);
 }
 
 void CallOp::build(
@@ -585,7 +597,7 @@ void CallOp::build(
       llzk::checkedCast<int32_t>(argOperands.size())
   );
   props.setCallee(callee);
-  addTemplateParams(odsBuilder, props, templateParams);
+  addTemplateParams<CallOp>(odsBuilder, props, templateParams);
 }
 
 LogicalResult

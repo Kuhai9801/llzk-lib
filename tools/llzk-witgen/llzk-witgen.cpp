@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "JSON.h"
 #include "WitgenDriver.h"
 #include "tools/config.h"
 
@@ -30,6 +31,7 @@
 
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlowOps.h>
+#include <mlir/Dialect/Func/Extensions/InlinerExtension.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
@@ -73,6 +75,8 @@ static llvm::cl::opt<bool>
     DumpJITCore("dump-jit-core", llvm::cl::desc("Print the pre-LLVM JIT module"));
 static llvm::cl::opt<bool>
     DumpJITLLVM("dump-jit-llvm", llvm::cl::desc("Print the post-LLVM JIT module"));
+static llvm::cl::opt<std::string>
+    CheckOutputFilename("check-output", llvm::cl::desc("JSON file with expected witgen output"));
 
 /// Execute the llzk-witgen command-line tool.
 int main(int argc, char **argv) {
@@ -90,6 +94,7 @@ int main(int argc, char **argv) {
 
   DialectRegistry registry;
   llzk::registerAllDialects(registry);
+  mlir::func::registerInlinerExtension(registry);
   registry.insert<
       mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect, mlir::func::FuncDialect,
       mlir::memref::MemRefDialect, mlir::scf::SCFDialect>();
@@ -166,6 +171,32 @@ int main(int argc, char **argv) {
   if (!result) {
     llvm::errs() << "llzk-witgen error: " << llvm::toString(result.takeError()) << '\n';
     return EXIT_FAILURE;
+  }
+
+  if (CheckOutputFilename.getNumOccurrences() > 0) {
+    auto expectedBuffer = llvm::MemoryBuffer::getFileOrSTDIN(CheckOutputFilename);
+    if (!expectedBuffer) {
+      llvm::errs() << expectedBuffer.getError().message() << '\n';
+      return EXIT_FAILURE;
+    }
+
+    auto expected = llvm::json::parse(expectedBuffer.get()->getBuffer());
+    if (!expected) {
+      llvm::errs() << "failed to parse expected JSON output: "
+                   << llvm::toString(expected.takeError()) << '\n';
+      return EXIT_FAILURE;
+    }
+
+    llvm::SmallVector<llzk::witgen::JSONMismatch> mismatches;
+    llzk::witgen::diffJSON(*expected, *result, mismatches);
+    if (!mismatches.empty()) {
+      llvm::errs() << "llzk-witgen output mismatch:\n";
+      llzk::witgen::printJSONMismatches(llvm::errs(), mismatches);
+      return EXIT_FAILURE;
+    }
+
+    llvm::outs() << "output matched expected JSON\n";
+    return EXIT_SUCCESS;
   }
 
   llvm::outs() << llvm::formatv("{0:2}", *result) << '\n';

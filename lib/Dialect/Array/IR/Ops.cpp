@@ -20,6 +20,7 @@
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/Diagnostics.h>
+#include <mlir/IR/Matchers.h>
 #include <mlir/IR/OwningOpRef.h>
 #include <mlir/IR/SymbolTable.h>
 #include <mlir/IR/ValueRange.h>
@@ -27,6 +28,8 @@
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/Twine.h>
+
+#include <optional>
 
 // TableGen'd implementation files
 #include "llzk/Dialect/Array/IR/OpInterfaces.cpp.inc"
@@ -469,7 +472,39 @@ LogicalResult InsertArrayOp::verify() {
 
 LogicalResult ArrayLengthOp::verifySymbolUses(SymbolTableCollection &tables) {
   // Ensure any SymbolRef used in the type are valid
-  return verifyTypeResolution(tables, *this, getArrRefType());
+  if (failed(verifyTypeResolution(tables, *this, getArrRefType()))) {
+    return failure();
+  }
+
+  auto dimValue = getDim();
+  llvm::APInt dim;
+  if (!matchPattern(dimValue, m_ConstantInt(&dim))) {
+    return success();
+  }
+
+  std::optional<int64_t> idxOpt = dim.trySExtValue();
+  if (!idxOpt || *idxOpt < 0) {
+    auto diag = emitOpError("dimension must be a non-negative 64-bit integer");
+    if (!llvm::isa<UnknownLoc>(dimValue.getLoc())) {
+      diag.attachNote(dimValue.getLoc()).append("dimension defined here");
+    }
+    return diag;
+  }
+  size_t idx = checkedCast<size_t>(*idxOpt);
+  size_t rank = getArrRefType().getDimensionSizes().size();
+  if (idx >= rank) {
+    InFlightDiagnostic diag = emitOpError().append(
+        "dimension index ", idx, " is not valid for array with ", rank, " dimensions"
+    );
+    if (!llvm::isa<UnknownLoc>(getArrRef().getLoc())) {
+      diag.attachNote(getArrRef().getLoc()).append("array defined here");
+    }
+    if (!llvm::isa<UnknownLoc>(dimValue.getLoc())) {
+      diag.attachNote(dimValue.getLoc()).append("dimension defined here");
+    }
+    return diag;
+  }
+  return success();
 }
 
 } // namespace llzk::array

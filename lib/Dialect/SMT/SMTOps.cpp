@@ -1,4 +1,4 @@
-//===- SMTOps.cpp ---------------------------------------------------------===//
+//===- SMTOps.cpp -----------------------------------------------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -268,7 +268,7 @@ ParseResult RepeatOp::parse(OpAsmParser &parser, OperationState &result) {
 }
 
 void RepeatOp::print(OpAsmPrinter &printer) {
-  printer << " " << getCount() << " times " << getInput();
+  printer << ' ' << getCount() << " times " << getInput();
   printer.printOptionalAttrDict((*this)->getAttrs());
   printer << " : " << getInput().getType();
 }
@@ -303,7 +303,7 @@ OpFoldResult IntConstantOp::fold(FoldAdaptor adaptor) {
 }
 
 void IntConstantOp::print(OpAsmPrinter &p) {
-  p << " " << getValue();
+  p << ' ' << getValue();
   p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/ {"value"});
 }
 

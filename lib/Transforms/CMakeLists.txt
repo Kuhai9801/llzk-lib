@@ -3,7 +3,10 @@ add_library(LLZK::LLZKTransforms ALIAS LLZKTransforms)
 
 file(GLOB LLZKTransforms_SOURCES "*.cpp")
 
-target_sources(LLZKTransforms PRIVATE ${LLZKTransforms_SOURCES})
+target_sources(
+  LLZKTransforms PRIVATE
+    ${LLZKTransforms_SOURCES}
+)
 
 target_link_libraries(
   LLZKTransforms
@@ -12,8 +15,8 @@ target_link_libraries(
     ${LLZK_DEP_DIALECT_LIBS}
     MLIRIR MLIRPass MLIRParser MLIRTransformUtils MLIRSCFTransforms
     LLVMHeaders MLIRHeaders
+    LLZKAllDialects
   PRIVATE
-    LLZKDialect
     LLZKAnalysis
 )
 
