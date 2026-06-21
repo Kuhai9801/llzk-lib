@@ -69,36 +69,14 @@ public:
   ///
   /// Result-producing operations and block starts are still visited through
   /// upstream MLIR. LLZK only handles the extra zero-result operation path.
-  mlir::LogicalResult initialize(mlir::Operation *top) override {
-    // Match upstream sparse initialization of top-level region entry arguments.
-    for (mlir::Region &region : top->getRegions()) {
-      if (region.empty()) {
-        continue;
-      }
-      for (mlir::Value argument : region.front().getArguments()) {
-        setToEntryState(getLatticeElement(argument));
-      }
-    }
-
-    return initializeRecursivelyInProgramOrder(top);
-  }
+  mlir::LogicalResult initialize(mlir::Operation *top) override;
 
   /// Delegate block starts and result-producing operations to upstream MLIR.
   /// Only zero-result operations need LLZK-specific handling.
-  mlir::LogicalResult visit(mlir::ProgramPoint *point) override {
-    if (point->isBlockStart()) {
-      return Base::visit(point);
-    }
-
-    mlir::Operation *op = point->getPrevOp();
-    if (op->getNumResults() != 0) {
-      return Base::visit(point);
-    }
-    return visitZeroResultOperation(op);
-  }
+  mlir::LogicalResult visit(mlir::ProgramPoint *point) override;
 
 protected:
-  explicit AbstractSparseForwardDataFlowAnalysis(mlir::DataFlowSolver &s) : Base(s) {}
+  explicit AbstractSparseForwardDataFlowAnalysis(mlir::DataFlowSolver &s);
 
   /// LLZK: Kept as a compatibility cache for analyses that derived from the old
   /// ported class and used this protected member.
@@ -112,110 +90,28 @@ private:
   /// MLIR. Interleaving zero-result operations with surrounding result-producing
   /// operations is important for LLZK analyses that maintain analysis-local
   /// state for effects such as storage writes.
-  mlir::LogicalResult initializeRecursivelyInProgramOrder(mlir::Operation *op) {
-    if (mlir::failed(visitOperationDuringInitialization(op))) {
-      return mlir::failure();
-    }
-
-    for (mlir::Region &region : op->getRegions()) {
-      for (mlir::Block &block : region) {
-        mlir::ProgramPoint *blockStart = getProgramPointBefore(&block);
-        getOrCreate<mlir::dataflow::Executable>(blockStart)->blockContentSubscribe(this);
-        if (mlir::failed(Base::visit(blockStart))) {
-          return mlir::failure();
-        }
-        for (mlir::Operation &nestedOp : block) {
-          if (mlir::failed(initializeRecursivelyInProgramOrder(&nestedOp))) {
-            return mlir::failure();
-          }
-        }
-      }
-    }
-
-    return mlir::success();
-  }
+  mlir::LogicalResult initializeRecursivelyInProgramOrder(mlir::Operation *op);
 
   /// Visit `op` during initialization using the upstream path whenever possible.
-  mlir::LogicalResult visitOperationDuringInitialization(mlir::Operation *op) {
-    if (op->getNumResults() == 0) {
-      // Preserve LLZK's zero-result transfer behavior for live effect ops such as
-      // constraints, assertions, and writes.
-      return visitZeroResultOperation(op);
-    }
-    return Base::visit(getProgramPointAfter(op));
-  }
+  mlir::LogicalResult visitOperationDuringInitialization(mlir::Operation *op);
 
   /// Return whether `op` should currently be treated as live.
-  bool isOperationLive(mlir::Operation *op) {
-    if (op->getBlock() == nullptr) {
-      return true;
-    }
-    return getOrCreate<mlir::dataflow::Executable>(getProgramPointBefore(op->getBlock()))->isLive();
-  }
+  bool isOperationLive(mlir::Operation *op);
 
   /// Collect operand lattices and subscribe this analysis through use-def chains
   /// so updates to operand values revisit their zero-result users.
   llvm::SmallVector<const AbstractSparseLattice *, 4>
-  collectOperandLatticesAndSubscribe(mlir::Operation *op) {
-    llvm::SmallVector<const AbstractSparseLattice *, 4> operandLattices;
-    operandLattices.reserve(op->getNumOperands());
-    for (mlir::Value operand : op->getOperands()) {
-      AbstractSparseLattice *operandLattice = getLatticeElement(operand);
-      operandLattice->useDefSubscribe(this);
-      operandLattices.push_back(operandLattice);
-    }
-    return operandLattices;
-  }
+  collectOperandLatticesAndSubscribe(mlir::Operation *op);
 
   /// Visit a live zero-result call operation.
   mlir::LogicalResult visitZeroResultCallOperation(
       mlir::CallOpInterface call, mlir::ArrayRef<const AbstractSparseLattice *> operandLattices
-  ) {
-    mlir::ArrayRef<AbstractSparseLattice *> emptyResultLattices;
-
-    // Preserve the external-call hook. LLZK analyses may use it for
-    // no-result call side effects even when there are no result lattices to
-    // update.
-    auto callable = llvm::dyn_cast_if_present<mlir::CallableOpInterface>(call.resolveCallable());
-    if (!getSolverConfig().isInterprocedural() || (callable && !callable.getCallableRegion())) {
-      visitExternalCallImpl(call, operandLattices, emptyResultLattices);
-      return mlir::success();
-    }
-
-    // Internal zero-result calls have no result lattices, but keep a callgraph
-    // dependency so later predecessor updates can revisit the call site.
-    mlir::Operation *callOp = call.getOperation();
-    (void)getOrCreateFor<mlir::dataflow::PredecessorState>(
-        getProgramPointAfter(callOp), getProgramPointAfter(callOp)
-    );
-    return mlir::success();
-  }
+  );
 
   /// Visit a live zero-result operation using the same operand/call dependency
   /// setup as upstream sparse forward analysis, but with an empty result lattice
   /// range.
-  mlir::LogicalResult visitZeroResultOperation(mlir::Operation *op) {
-    if (!isOperationLive(op)) {
-      return mlir::success();
-    }
-
-    // Region-branch operations are fully owned by upstream control-flow
-    // propagation. For zero-result region branches, there are no parent result
-    // lattices for this compatibility path to update.
-    if (llvm::isa<mlir::RegionBranchOpInterface>(op)) {
-      return mlir::success();
-    }
-
-    auto operandLattices = collectOperandLatticesAndSubscribe(op);
-
-    if (auto call = llvm::dyn_cast<mlir::CallOpInterface>(op)) {
-      return visitZeroResultCallOperation(call, operandLattices);
-    }
-
-    // Invoke the typed operation transfer function with an empty result range.
-    mlir::ArrayRef<AbstractSparseLattice *> emptyResultLattices;
-    return visitOperationImpl(op, operandLattices, emptyResultLattices);
-  }
+  mlir::LogicalResult visitZeroResultOperation(mlir::Operation *op);
 };
 
 //===----------------------------------------------------------------------===//
