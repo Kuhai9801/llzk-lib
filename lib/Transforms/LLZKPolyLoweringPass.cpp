@@ -76,6 +76,7 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
     });
   }
 
+  /// Records a dependency from the current aux assignment to a prerequisite.
   void addAuxDependency(
       unsigned dep, unsigned owner, DenseSet<unsigned> &seenDeps, SmallVectorImpl<unsigned> &deps
   ) const {
@@ -87,6 +88,7 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
     }
   }
 
+  /// Collects aux assignments that must be written before the given value can be rebuilt.
   void collectAuxDependencies(
       Value val, unsigned owner, const DenseMap<Value, unsigned> &auxValueToIndex,
       const llvm::StringMap<unsigned> &auxNameToIndex, DenseSet<Value> &visitedValues,
@@ -109,18 +111,16 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
       }
     }
 
-    Operation *defOp = val.getDefiningOp();
-    if (!defOp) {
-      return;
-    }
-
-    for (Value operand : defOp->getOperands()) {
-      collectAuxDependencies(
-          operand, owner, auxValueToIndex, auxNameToIndex, visitedValues, seenDeps, deps
-      );
+    if (Operation *defOp = val.getDefiningOp()) {
+      for (Value operand : defOp->getOperands()) {
+        collectAuxDependencies(
+            operand, owner, auxValueToIndex, auxNameToIndex, visitedValues, seenDeps, deps
+        );
+      }
     }
   }
 
+  /// Visits aux assignments depth-first so dependencies are emitted before users.
   LogicalResult visitAuxAssignment(
       unsigned idx, ArrayRef<SmallVector<unsigned>> deps,
       SmallVectorImpl<AuxAssignmentVisitState> &visitState, SmallVectorImpl<unsigned> &ordered,
@@ -147,6 +147,7 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
     return success();
   }
 
+  /// Produces a topological write order for generated aux assignments.
   LogicalResult orderAuxAssignments(
       ArrayRef<AuxAssignment> auxAssignments, SmallVectorImpl<unsigned> &ordered
   ) const {
