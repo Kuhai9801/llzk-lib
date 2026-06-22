@@ -304,7 +304,7 @@ public:
       Operation *op, ArrayRef<const TestSparseLattice *> /*operands*/,
       ArrayRef<TestSparseLattice *> /*results*/
   ) override {
-    if (op->getName().getStringRef() == kFunctionCallName) {
+    if (isa<llzk::function::CallOp>(op)) {
       ++typedCallTransfers;
     }
     return success();
