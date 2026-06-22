@@ -11,6 +11,7 @@
 
 #include "llzk/Analysis/AnalysisUtil.h"
 #include "llzk/Analysis/SparseAnalysis.h"
+#include "llzk/Dialect/Function/IR/Ops.h"
 
 #include <mlir/Analysis/DataFlow/DeadCodeAnalysis.h>
 #include <mlir/Analysis/DataFlowFramework.h>
@@ -43,6 +44,10 @@ constexpr llvm::StringLiteral kRegionSinkName("test.region_sink");
 constexpr llvm::StringLiteral kSinkName("test.sink");
 constexpr llvm::StringLiteral kSourceName("test.source");
 constexpr llvm::StringLiteral kStoreName("test.store");
+constexpr unsigned kInitialLatticeValue = 0;
+constexpr unsigned kEntryLatticeValue = 1;
+constexpr unsigned kDelayedProducerReadyValue = 42;
+constexpr unsigned kSourceValue = 13;
 
 class TestSparseLattice : public llzk::dataflow::AbstractSparseLattice {
 public:
@@ -63,7 +68,7 @@ public:
   void print(raw_ostream &os) const override { os << value; }
 
 private:
-  unsigned value = 0;
+  unsigned value = kInitialLatticeValue;
 };
 
 /// A tiny state used to force the delayed producer lattice to change only after
@@ -115,7 +120,7 @@ public:
       TriggerState *trigger = getTriggerState();
       addDependency(trigger, getProgramPointAfter(op));
       if (!results.empty() && trigger->isReady()) {
-        propagateIfChanged(results.front(), results.front()->setValue(42));
+        propagateIfChanged(results.front(), results.front()->setValue(kDelayedProducerReadyValue));
       }
       return success();
     }
@@ -143,7 +148,9 @@ public:
   bool visitedSinkWithoutOperand() const { return sawSinkWithoutOperand; }
 
 protected:
-  void setToEntryState(TestSparseLattice *lattice) override { (void)lattice->setValue(1); }
+  void setToEntryState(TestSparseLattice *lattice) override {
+    (void)lattice->setValue(kEntryLatticeValue);
+  }
 
 private:
   TriggerState *getTriggerState() {
@@ -171,7 +178,7 @@ public:
 
     if (opName == kSourceName) {
       if (!results.empty()) {
-        propagateIfChanged(results.front(), results.front()->setValue(13));
+        propagateIfChanged(results.front(), results.front()->setValue(kSourceValue));
       }
       return success();
     }
@@ -209,7 +216,9 @@ public:
   bool visitedStoreWithoutOperand() const { return sawStoreWithoutOperand; }
 
 protected:
-  void setToEntryState(TestSparseLattice *lattice) override { (void)lattice->setValue(1); }
+  void setToEntryState(TestSparseLattice *lattice) override {
+    (void)lattice->setValue(kEntryLatticeValue);
+  }
 
 private:
   std::optional<unsigned> storedValue;
@@ -242,7 +251,9 @@ public:
   bool sawRegionSinkTransfer() const { return sawRegionSink; }
 
 protected:
-  void setToEntryState(TestSparseLattice *lattice) override { (void)lattice->setValue(1); }
+  void setToEntryState(TestSparseLattice *lattice) override {
+    (void)lattice->setValue(kEntryLatticeValue);
+  }
 
 private:
   bool sawIfTransfer = false;
@@ -273,7 +284,9 @@ public:
   unsigned getLiveSinkTransferCount() const { return liveSinkTransfers; }
 
 protected:
-  void setToEntryState(TestSparseLattice *lattice) override { (void)lattice->setValue(1); }
+  void setToEntryState(TestSparseLattice *lattice) override {
+    (void)lattice->setValue(kEntryLatticeValue);
+  }
 
 private:
   unsigned deadSinkTransfers = 0;
@@ -315,7 +328,9 @@ public:
   llvm::ArrayRef<std::size_t> getExternalResultCounts() const { return externalResultCounts; }
 
 protected:
-  void setToEntryState(TestSparseLattice *lattice) override { (void)lattice->setValue(1); }
+  void setToEntryState(TestSparseLattice *lattice) override {
+    (void)lattice->setValue(kEntryLatticeValue);
+  }
 
 private:
   unsigned typedCallTransfers = 0;
@@ -329,7 +344,7 @@ class SparseAnalysisTests : public LLZKTest {};
 Operation *findSingleZeroResultFunctionCall(ModuleOp module) {
   Operation *callOp = nullptr;
   WalkResult walkResult = module.walk([&](Operation *op) {
-    if (op->getName().getStringRef() != kFunctionCallName || op->getNumResults() != 0) {
+    if (!isa<llzk::function::CallOp>(op) || op->getNumResults() != 0) {
       return WalkResult::advance();
     }
     if (callOp != nullptr) {
@@ -365,8 +380,8 @@ module {
   EXPECT_FALSE(analysis->visitedSinkWithoutOperand());
   ASSERT_GE(analysis->getSinkVisitCount(), 2U);
   ASSERT_GE(values.size(), 2U);
-  EXPECT_EQ(values.front(), 0U);
-  EXPECT_EQ(values.back(), 42U);
+  EXPECT_EQ(values.front(), kInitialLatticeValue);
+  EXPECT_EQ(values.back(), kDelayedProducerReadyValue);
 }
 
 TEST_F(SparseAnalysisTests, InitializesZeroResultOpsInProgramOrder) {
@@ -395,7 +410,7 @@ module {
   EXPECT_FALSE(analysis->visitedStoreWithoutOperand());
   EXPECT_FALSE(analysis->visitedConsumerWithoutOperand());
   ASSERT_FALSE(values.empty());
-  EXPECT_EQ(values.back(), 13U);
+  EXPECT_EQ(values.back(), kSourceValue);
 }
 
 TEST_F(SparseAnalysisTests, DoesNotCallTypedTransferForZeroResultRegionBranchOps) {
