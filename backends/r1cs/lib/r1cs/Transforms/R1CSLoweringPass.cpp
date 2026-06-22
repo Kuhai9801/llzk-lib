@@ -641,11 +641,17 @@ class PassImpl : public r1cs::impl::R1CSLoweringPassBase<PassImpl> {
     for (const R1CSConstraint &constraint : constraints) {
       FailureOr<Value> aVal =
           emitLinearCombination(constraint.a, valueMap, memberSignalMap, selfVal, bodyBuilder, loc);
+      if (failed(aVal)) {
+        return failure();
+      }
       FailureOr<Value> bVal =
           emitLinearCombination(constraint.b, valueMap, memberSignalMap, selfVal, bodyBuilder, loc);
+      if (failed(bVal)) {
+        return failure();
+      }
       FailureOr<Value> cVal =
           emitLinearCombination(constraint.c, valueMap, memberSignalMap, selfVal, bodyBuilder, loc);
-      if (failed(aVal) || failed(bVal) || failed(cVal)) {
+      if (failed(cVal)) {
         return failure();
       }
       bodyBuilder.create<r1cs::ConstrainOp>(loc, *aVal, *bVal, *cVal);
