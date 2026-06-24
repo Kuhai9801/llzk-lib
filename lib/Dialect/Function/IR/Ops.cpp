@@ -552,7 +552,7 @@ LogicalResult CallOp::readProperties(DialectBytecodeReader &reader, OperationSta
   return success();
 }
 
-// Same as tablegen would generate to serialize version 2 IR.
+// Same as tablegen would generate to serialize current version IR.
 void CallOp::writeProperties(DialectBytecodeWriter &writer) {
   auto &prop = getProperties();
   writer.writeAttribute(prop.callee);
@@ -1139,6 +1139,12 @@ bool calleeIsStructFunctionImpl(
 bool CallOp::calleeIsStructCompute() {
   return calleeIsStructFunctionImpl(FUNC_NAME_COMPUTE, getCallee(), [this]() {
     return this->getSingleResultTypeOfCompute();
+  });
+}
+
+bool CallOp::calleeIsStructProduct() {
+  return calleeIsStructFunctionImpl(FUNC_NAME_PRODUCT, getCallee(), [this]() {
+    return this->getSingleResultTypeOfWitnessGen();
   });
 }
 
