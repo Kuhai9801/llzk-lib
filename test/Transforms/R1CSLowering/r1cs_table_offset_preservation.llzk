@@ -11,6 +11,9 @@ module attributes {llzk.lang, llzk.main = !struct.type<@Rows>} {
     }
 
     function.def @constrain(%self: !struct.type<@Rows>) {
+      %out = struct.readm %self[@out] : !struct.type<@Rows>, !felt.type<"babybear">
+      %zero = felt.const 0 <"babybear">
+      constrain.eq %out, %zero : !felt.type<"babybear">
       %prev = struct.readm %self[@cell] : !struct.type<@Rows>, !felt.type<"babybear"> {tableOffset = -1 : index}
       %curr = struct.readm %self[@cell] : !struct.type<@Rows>, !felt.type<"babybear"> {tableOffset = 0 : index}
       constrain.eq %prev, %curr : !felt.type<"babybear">
