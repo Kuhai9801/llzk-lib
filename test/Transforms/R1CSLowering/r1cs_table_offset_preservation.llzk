@@ -5,15 +5,17 @@ module attributes {llzk.lang, llzk.main = !struct.type<@Rows>} {
     struct.member @out : !felt.type<"babybear"> {llzk.pub}
     struct.member @cell : !felt.type<"babybear"> {column}
 
-    function.def @compute() -> !struct.type<@Rows> {
+    function.def @compute(%a: !felt.type<"babybear">) -> !struct.type<@Rows> {
       %self = struct.new : !struct.type<@Rows>
       function.return %self : !struct.type<@Rows>
     }
 
-    function.def @constrain(%self: !struct.type<@Rows>) {
+    function.def @constrain(
+      %self: !struct.type<@Rows>,
+      %a: !felt.type<"babybear"> {llzk.pub}
+    ) {
       %out = struct.readm %self[@out] : !struct.type<@Rows>, !felt.type<"babybear">
-      %zero = felt.const 0 <"babybear">
-      constrain.eq %out, %zero : !felt.type<"babybear">
+      constrain.eq %out, %a : !felt.type<"babybear">
       %prev = struct.readm %self[@cell] : !struct.type<@Rows>, !felt.type<"babybear"> {tableOffset = -1 : index}
       %curr = struct.readm %self[@cell] : !struct.type<@Rows>, !felt.type<"babybear"> {tableOffset = 0 : index}
       constrain.eq %prev, %curr : !felt.type<"babybear">
@@ -22,7 +24,8 @@ module attributes {llzk.lang, llzk.main = !struct.type<@Rows>} {
   }
 }
 
-// CHECK-LABEL: r1cs.circuit @Rows inputs () {
+// CHECK-LABEL: r1cs.circuit @Rows inputs (
+// CHECK-SAME:  %[[A:[0-9a-zA-Z_\.]+]]: !r1cs.signal {#r1cs.pub}
 // CHECK:         %[[OUT:[0-9a-zA-Z_\.]+]] = r1cs.def 0 : !r1cs.signal {pub = #r1cs.pub}
 // CHECK:         %[[PREV:[0-9a-zA-Z_\.]+]] = r1cs.def 1 : !r1cs.signal
 // CHECK:         %[[CURR:[0-9a-zA-Z_\.]+]] = r1cs.def 2 : !r1cs.signal
