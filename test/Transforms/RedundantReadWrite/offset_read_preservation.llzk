@@ -1,0 +1,24 @@
+// RUN: llzk-opt --llzk-duplicate-read-write-elim %s | FileCheck --enable-var-scope %s
+
+module attributes {llzk.lang} {
+  struct.def @Rows {
+    struct.member @cell : !felt.type {column}
+
+    function.def @compute() -> !struct.type<@Rows> {
+      %self = struct.new : !struct.type<@Rows>
+      function.return %self : !struct.type<@Rows>
+    }
+
+    function.def @constrain(%self: !struct.type<@Rows>) {
+      %prev = struct.readm %self[@cell] : !struct.type<@Rows>, !felt.type {tableOffset = -1 : index}
+      %curr = struct.readm %self[@cell] : !struct.type<@Rows>, !felt.type {tableOffset = 0 : index}
+      constrain.eq %prev, %curr : !felt.type, !felt.type
+      function.return
+    }
+  }
+}
+
+// CHECK-LABEL: function.def @constrain(
+// CHECK:         %[[PREV:[0-9a-zA-Z_\.]+]] = struct.readm {{.*}}\[@cell\] : {{.*}} {tableOffset = -1 : index}
+// CHECK:         %[[CURR:[0-9a-zA-Z_\.]+]] = struct.readm {{.*}}\[@cell\] : {{.*}} {tableOffset = 0 : index}
+// CHECK:         constrain.eq %[[PREV]], %[[CURR]] : !felt.type, !felt.type
