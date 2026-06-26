@@ -122,12 +122,12 @@ module attributes {llzk.lang} {
     }
 
     function.def @constrain(%self: !struct.type<@AffineOffsets>, %i: index, %j: index) {
-      %left = struct.readm %self[@cell] {(%i)}
-          : !struct.type<@AffineOffsets>, !felt.type {tableOffset = affine_map<(d0) -> (d0)>}
-      %right = struct.readm %self[@cell] {(%j)}
-          : !struct.type<@AffineOffsets>, !felt.type {tableOffset = affine_map<(d0) -> (d0)>}
-      %again = struct.readm %self[@cell] {(%i)}
-          : !struct.type<@AffineOffsets>, !felt.type {tableOffset = affine_map<(d0) -> (d0)>}
+      %left = struct.readm %self[@cell] {()[%i]}
+          : !struct.type<@AffineOffsets>, !felt.type {tableOffset = affine_map<()[s0] -> (s0)>}
+      %right = struct.readm %self[@cell] {()[%j]}
+          : !struct.type<@AffineOffsets>, !felt.type {tableOffset = affine_map<()[s0] -> (s0)>}
+      %again = struct.readm %self[@cell] {()[%i]}
+          : !struct.type<@AffineOffsets>, !felt.type {tableOffset = affine_map<()[s0] -> (s0)>}
       constrain.eq %left, %right : !felt.type
       constrain.eq %left, %again : !felt.type
       function.return
@@ -152,11 +152,11 @@ module attributes {llzk.lang} {
 
     function.def @compute(%i: index, %value: !felt.type) -> !struct.type<@AffineWriteAlias> {
       %self = struct.new : !struct.type<@AffineWriteAlias>
-      %first = struct.readm %self[@cell] {(%i)}
-          : !struct.type<@AffineWriteAlias>, !felt.type {tableOffset = affine_map<(d0) -> (d0)>}
+      %first = struct.readm %self[@cell] {()[%i]}
+          : !struct.type<@AffineWriteAlias>, !felt.type {tableOffset = affine_map<()[s0] -> (s0)>}
       struct.writem %self[@cell] = %value : !struct.type<@AffineWriteAlias>, !felt.type
-      %second = struct.readm %self[@cell] {(%i)}
-          : !struct.type<@AffineWriteAlias>, !felt.type {tableOffset = affine_map<(d0) -> (d0)>}
+      %second = struct.readm %self[@cell] {()[%i]}
+          : !struct.type<@AffineWriteAlias>, !felt.type {tableOffset = affine_map<()[s0] -> (s0)>}
       struct.writem %self[@before] = %first : !struct.type<@AffineWriteAlias>, !felt.type
       struct.writem %self[@after] = %second : !struct.type<@AffineWriteAlias>, !felt.type
       function.return %self : !struct.type<@AffineWriteAlias>
