@@ -1,0 +1,34 @@
+// RUN: llzk-opt -llzk-full-r1cs-lowering -verify-diagnostics %s | r1cs-opt --verify-diagnostics - | FileCheck --enable-var-scope %s
+
+module attributes {llzk.lang, llzk.main = !struct.type<@Rows>} {
+  struct.def @Rows {
+    struct.member @out : !felt.type<"babybear"> {llzk.pub}
+    struct.member @cell : !felt.type<"babybear"> {column}
+
+    function.def @compute(%a: !felt.type<"babybear">) -> !struct.type<@Rows> {
+      %self = struct.new : !struct.type<@Rows>
+      function.return %self : !struct.type<@Rows>
+    }
+
+    function.def @constrain(
+      %self: !struct.type<@Rows>,
+      %a: !felt.type<"babybear"> {llzk.pub}
+    ) {
+      %out = struct.readm %self[@out] : !struct.type<@Rows>, !felt.type<"babybear">
+      constrain.eq %out, %a : !felt.type<"babybear">
+      %prev = struct.readm %self[@cell] : !struct.type<@Rows>, !felt.type<"babybear"> {tableOffset = -1 : index}
+      %curr = struct.readm %self[@cell] : !struct.type<@Rows>, !felt.type<"babybear"> {tableOffset = 0 : index}
+      constrain.eq %prev, %curr : !felt.type<"babybear">
+      function.return
+    }
+  }
+}
+
+// CHECK-LABEL: r1cs.circuit @Rows inputs (
+// CHECK-SAME:  %[[A:[0-9a-zA-Z_\.]+]]: !r1cs.signal {#r1cs.pub}
+// CHECK:         %[[OUT:[0-9a-zA-Z_\.]+]] = r1cs.def 0 : !r1cs.signal {pub = #r1cs.pub}
+// CHECK:         %[[PREV:[0-9a-zA-Z_\.]+]] = r1cs.def 1 : !r1cs.signal
+// CHECK:         %[[CURR:[0-9a-zA-Z_\.]+]] = r1cs.def 2 : !r1cs.signal
+// CHECK:         %[[PREV_LIN:[0-9a-zA-Z_\.]+]] = r1cs.to_linear %[[PREV]] : !r1cs.signal to !r1cs.linear
+// CHECK:         %[[CURR_LIN:[0-9a-zA-Z_\.]+]] = r1cs.to_linear %[[CURR]] : !r1cs.signal to !r1cs.linear
+// CHECK:         r1cs.constrain

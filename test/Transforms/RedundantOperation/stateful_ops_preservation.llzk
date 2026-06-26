@@ -1,0 +1,51 @@
+// RUN: llzk-opt -split-input-file --llzk-duplicate-op-elim %s | FileCheck --enable-var-scope %s
+
+module attributes {llzk.lang} {
+  global.def @g : !felt.type = 1
+
+  struct.def @GlobalState {
+    struct.member @out : !felt.type {llzk.pub}
+
+    function.def @compute() -> !struct.type<@GlobalState> {
+      %self = struct.new : !struct.type<@GlobalState>
+      %two = felt.const 2
+      %before = global.read @g : !felt.type
+      global.write @g = %two : !felt.type
+      %after = global.read @g : !felt.type
+      struct.writem %self[@out] = %after : !struct.type<@GlobalState>, !felt.type
+      function.return %self : !struct.type<@GlobalState>
+    }
+
+    function.def @constrain(%self: !struct.type<@GlobalState>) {
+      function.return
+    }
+  }
+}
+
+// CHECK-LABEL: function.def @compute()
+// CHECK:         %[[BEFORE:[0-9a-zA-Z_\.]+]] = global.read @g : !felt.type
+// CHECK:         global.write @g
+// CHECK:         %[[AFTER:[0-9a-zA-Z_\.]+]] = global.read @g : !felt.type
+// CHECK:         struct.writem {{.*}}\[@out\] = %[[AFTER]]
+
+// -----
+
+module attributes {llzk.lang} {
+  function.def @ram_state() -> !felt.type attributes {function.allow_witness} {
+    %addr = arith.constant 0 : index
+    %one = felt.const 1
+    %two = felt.const 2
+    ram.store %addr, %one : !felt.type
+    %before = ram.load %addr : !felt.type
+    ram.store %addr, %two : !felt.type
+    %after = ram.load %addr : !felt.type
+    function.return %after : !felt.type
+  }
+}
+
+// CHECK-LABEL: function.def @ram_state()
+// CHECK:         ram.store
+// CHECK:         %[[BEFORE:[0-9a-zA-Z_\.]+]] = ram.load
+// CHECK:         ram.store
+// CHECK:         %[[AFTER:[0-9a-zA-Z_\.]+]] = ram.load
+// CHECK:         function.return %[[AFTER]]
