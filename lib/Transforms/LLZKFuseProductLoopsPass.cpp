@@ -12,8 +12,12 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "llzk/Dialect/Array/IR/Ops.h"
 #include "llzk/Dialect/Function/IR/Ops.h"
+#include "llzk/Dialect/Global/IR/Ops.h"
+#include "llzk/Dialect/POD/IR/Ops.h"
 #include "llzk/Dialect/Polymorphic/IR/Ops.h"
+#include "llzk/Dialect/RAM/IR/Ops.h"
 #include "llzk/Dialect/Struct/IR/Ops.h"
 #include "llzk/Transforms/LLZKTransformationPasses.h"
 #include "llzk/Util/AlignmentHelper.h"
@@ -23,6 +27,7 @@
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Interfaces/CallInterfaces.h>
+#include <mlir/Interfaces/SideEffectInterfaces.h>
 
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/STLExtras.h>
@@ -174,7 +179,8 @@ static inline bool areOppositeProductSources(Operation *a, Operation *b) {
   if (!sourceA || !sourceB) {
     return false;
   }
-  return *sourceA != *sourceB;
+  return (*sourceA == FUNC_NAME_COMPUTE && *sourceB == FUNC_NAME_CONSTRAIN) ||
+         (*sourceA == FUNC_NAME_CONSTRAIN && *sourceB == FUNC_NAME_COMPUTE);
 }
 
 static bool isBetweenInBlock(Operation *op, Operation *before, Operation *after) {
@@ -191,17 +197,50 @@ static std::optional<unsigned> getIfResultIndex(scf::IfOp ifOp, Value value) {
   return std::nullopt;
 }
 
+static bool hasWriteLikeMemoryEffect(Operation *op) {
+  auto effectOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effectOp) {
+    return false;
+  }
+  return effectOp.hasEffect<MemoryEffects::Write>() ||
+         effectOp.hasEffect<MemoryEffects::Allocate>() || effectOp.hasEffect<MemoryEffects::Free>();
+}
+
+static bool hasUnsafeMovedConstrainOp(scf::IfOp constrainIf) {
+  auto result = constrainIf->walk([&](Operation *op) {
+    if (op == constrainIf.getOperation() || isa<scf::YieldOp>(op)) {
+      return WalkResult::advance();
+    }
+
+    if (isa<MemberReadOp, MemberWriteOp, llzk::global::GlobalWriteOp, llzk::array::WriteArrayOp,
+            llzk::array::InsertArrayOp, llzk::pod::WritePodOp, llzk::ram::StoreOp>(op)) {
+      return WalkResult::interrupt();
+    }
+
+    if (op->hasTrait<llzk::function::WitnessGen>() || hasWriteLikeMemoryEffect(op)) {
+      return WalkResult::interrupt();
+    }
+
+    if (isa<CallOpInterface>(op)) {
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return result.wasInterrupted();
+}
+
 static bool collectConstrainValueMappings(
     scf::IfOp computeIf, scf::IfOp constrainIf, llvm::DenseMap<Value, unsigned> &valueToResult
 ) {
-  bool hasInterveningWrite = false;
+  // `scf.if` fusion moves the constrain branch before intervening member writes of compute-if
+  // results. The moved branch must not read members, write storage, call functions, or have
+  // write-like effects.
   for (Operation *op = computeIf->getNextNode(); op != constrainIf; op = op->getNextNode()) {
     if (auto writeOp = dyn_cast<MemberWriteOp>(op)) {
       std::optional<unsigned> resultIndex = getIfResultIndex(computeIf, writeOp.getVal());
       if (!resultIndex) {
         return false;
       }
-      hasInterveningWrite = true;
       continue;
     }
 
@@ -218,19 +257,7 @@ static bool collectConstrainValueMappings(
     valueToResult[result] = idx;
   }
 
-  auto hasInternalRead = constrainIf->walk([](MemberReadOp) { return WalkResult::interrupt(); });
-  if (hasInternalRead.wasInterrupted()) {
-    return false;
-  }
-
-  // Calls may indirectly read members whose writes would be moved after the fused branch.
-  auto hasCallAfterMappedWrite = constrainIf->walk([&](Operation *op) {
-    if (hasInterveningWrite && isa<CallOpInterface>(op)) {
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  if (hasCallAfterMappedWrite.wasInterrupted()) {
+  if (hasUnsafeMovedConstrainOp(constrainIf)) {
     return false;
   }
 
