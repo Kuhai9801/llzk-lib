@@ -156,7 +156,8 @@ module attributes {llzk.lang} {
   }
 }
 
-// CHECK-LABEL: function.def @ram_load_reuse(%[[ADDR:[0-9a-zA-Z_\.]+]]: index) -> !felt.type
+// CHECK-LABEL: function.def @ram_load_reuse(
+// CHECK-SAME: %[[ADDR:[0-9a-zA-Z_\.]+]]: index) -> !felt.type
 // CHECK: %[[LOAD:[0-9a-zA-Z_\.]+]] = ram.load %[[ADDR]] : !felt.type
 // CHECK-NOT: ram.load %[[ADDR]]
 // CHECK: felt.add %[[LOAD]], %[[LOAD]] : !felt.type, !felt.type
