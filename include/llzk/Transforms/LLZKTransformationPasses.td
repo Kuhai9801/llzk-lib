@@ -16,7 +16,10 @@ def RedundantReadAndWriteEliminationPass
     : LLZKPass<"llzk-duplicate-read-write-elim"> {
   let summary = "Remove redundant reads and writes";
   let description = [{
-    Remove read and write operations to struct members and arrays that are redundant or unnecessary.
+    Remove struct-member and array reads or writes that repeat the same access.
+    Struct-member accesses match only when the base, member, table offset,
+    affine map metadata, and translated affine operands match. Omitted
+    member-read offsets and member writes denote the current row.
   }];
 }
 
