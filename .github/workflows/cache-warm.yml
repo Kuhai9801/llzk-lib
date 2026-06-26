@@ -1,52 +1,57 @@
-name: Nix check
+name: Cache Warm
+
 on:
-  push:
-    branches: [ main ]
-  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
-  run:
-    strategy:
-      matrix:
-        cmakeBuildType: [debug, release]
+  warm-nix-cache:
+    name: Warm Nix cache (${{ matrix.name }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debug-gcc
+            target: ".#debugGCC"
+          - name: debug-clang-coverage
+            target: ".#debugClangCov"
+          - name: installcheck-debug
+            target: ".#checks.x86_64-linux.llzk-installcheck-debug"
+          - name: installcheck-release
+            target: ".#checks.x86_64-linux.llzk-installcheck-release"
+          - name: docs
+            target: ".#docs"
+            nix-options: "--option sandbox false"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           persist-credentials: false
-      # v37.1.0
+
       - uses: cachix/install-nix-action@d1ca217b388ee87b2507a9a93bf01368bde7cec2
         with:
           install_url: https://releases.nixos.org/nix/nix-2.23.3/install
           github_access_token: "${{ secrets.GITHUB_TOKEN }}"
+
       - name: Set Git credentials
         run: |
           git config --global 'url.https://api@github.com/'.insteadOf 'https://github.com/'
           git config --global 'url.https://ssh@github.com/'.insteadOf 'ssh://git@github.com/'
           git config --global 'url.https://git@github.com/'.insteadOf 'git@github.com:'
+
       - uses: cachix/cachix-action@v17
         with:
           name: veridise-public
           authToken: '${{ secrets.CACHIX_PUBLIC_TOKEN }}'
           skipPush: ${{ secrets.CACHIX_PUBLIC_TOKEN == '' }}
-      - uses: DeterminateSystems/magic-nix-cache-action@v13
-      - name: Build and check install (${{ matrix.cmakeBuildType }})
-        run: nix --print-build-logs build '.#checks.x86_64-linux.llzk-installcheck-${{ matrix.cmakeBuildType }}'
 
-  # WARNING: do not change this job name. It is a required status check for PRs to `main`.
-  nix-check-result:
-    needs: run
-    runs-on: ubuntu-24.04
-    if: ${{ !cancelled() }}
-    steps:
-      - name: Verify nix-check passed
-        run: |
-          if [[ "${{ needs.run.result }}" != "success" ]]; then
-            echo "nix-check failed or was cancelled"
-            exit 1
-          fi
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+
+      - name: Build ${{ matrix.name }}
+        run: nix ${{ matrix.nix-options }} --print-build-logs build '${{ matrix.target }}'
