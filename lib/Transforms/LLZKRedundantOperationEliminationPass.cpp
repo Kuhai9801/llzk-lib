@@ -19,6 +19,7 @@
 #include "llzk/Dialect/LLZK/IR/Ops.h"
 #include "llzk/Dialect/RAM/IR/Ops.h"
 #include "llzk/Dialect/Struct/IR/Dialect.h"
+#include "llzk/Dialect/Struct/IR/Ops.h"
 #include "llzk/Transforms/LLZKTransformationPasses.h"
 #include "llzk/Util/SymbolHelper.h"
 
@@ -131,6 +132,18 @@ static void updateReadState(Operation *op, BlockReadState &state) {
       return;
     }
   }
+}
+
+static bool isDeadAfterElimination(Operation *op) {
+  if (isOpTriviallyDead(op)) {
+    return true;
+  }
+
+  // Member reads are observations with no mutation. Keep this local so the
+  // pass can clean up reads made unused by its rewrites without changing
+  // dialect-wide canonicalization behavior for unrelated pipelines.
+  return isa<MemberReadOp>(op) &&
+         llvm::all_of(op->getResults(), [](Value result) { return result.use_empty(); });
 }
 
 /// @brief A wrapper for an operation that provides comparators for operations
@@ -376,7 +389,7 @@ class PassImpl : public llzk::impl::RedundantOperationEliminationPassBase<PassIm
     while (!deadOpCandidates.empty()) {
       Operation *op = deadOpCandidates.pop_back_val();
       queuedDeadOps.erase(op);
-      if (!isOpTriviallyDead(op)) {
+      if (!isDeadAfterElimination(op)) {
         continue;
       }
 
