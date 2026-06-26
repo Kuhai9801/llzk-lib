@@ -49,6 +49,10 @@ jobs:
     needs: run
     runs-on: ubuntu-24.04
     if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v7
