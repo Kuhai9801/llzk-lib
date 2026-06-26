@@ -1,0 +1,3 @@
+fixed:
+  - Prevent redundant elimination passes from reusing stateful reads across
+    writes, stores, or mismatched table offsets.

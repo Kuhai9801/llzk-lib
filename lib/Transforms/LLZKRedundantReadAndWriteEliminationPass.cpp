@@ -46,8 +46,8 @@ using namespace llzk::component;
 
 namespace {
 
-/// @brief An reference to a value, represented either by an SSA value, a
-/// symbol reference (e.g., a member name), or an int (e.g., a constant array index).
+/// @brief A reference to a value, represented by an SSA value, an attribute
+/// (e.g., a member name or access metadata), or an int (e.g., a constant array index).
 class ReferenceID {
 public:
   explicit ReferenceID(Value v) {
@@ -63,12 +63,12 @@ public:
       identifier = v;
     }
   }
-  explicit ReferenceID(FlatSymbolRefAttr s) : identifier(s) {}
+  explicit ReferenceID(Attribute attr) : identifier(attr) {}
   explicit ReferenceID(const APInt &i) : identifier(i) {}
   explicit ReferenceID(unsigned i) : identifier(APInt(64, i)) {}
 
   bool isValue() const { return std::holds_alternative<Value>(identifier); }
-  bool isSymbol() const { return std::holds_alternative<FlatSymbolRefAttr>(identifier); }
+  bool isAttribute() const { return std::holds_alternative<Attribute>(identifier); }
   bool isConst() const { return std::holds_alternative<APInt>(identifier); }
 
   Value getValue() const {
@@ -76,9 +76,9 @@ public:
     return std::get<Value>(identifier);
   }
 
-  FlatSymbolRefAttr getSymbol() const {
-    ensure(isSymbol(), "does not hold symbol");
-    return std::get<FlatSymbolRefAttr>(identifier);
+  Attribute getAttribute() const {
+    ensure(isAttribute(), "does not hold Attribute");
+    return std::get<Attribute>(identifier);
   }
 
   APInt getConst() const {
@@ -93,8 +93,8 @@ public:
       } else {
         os << *v;
       }
-    } else if (const auto *s = std::get_if<FlatSymbolRefAttr>(&identifier)) {
-      os << *s;
+    } else if (const auto *attr = std::get_if<Attribute>(&identifier)) {
+      os << *attr;
     } else {
       os << std::get<APInt>(identifier);
     }
@@ -111,10 +111,10 @@ public:
 
 private:
   /// @brief Three cases:
-  /// FlatSymbolRefAttr: identifier refers to a named member in a struct
+  /// Attribute: identifier refers to a named member or other access metadata
   /// APInt: identifier refers to a constant index in an array
-  /// Value: identifier refers to a dynamic index in an array
-  std::variant<FlatSymbolRefAttr, APInt, Value> identifier;
+  /// Value: identifier refers to a dynamic index or access operand
+  std::variant<Attribute, APInt, Value> identifier;
 };
 
 } // namespace
@@ -132,8 +132,8 @@ template <> struct DenseMapInfo<ReferenceID> {
   static unsigned getHashValue(const ReferenceID &r) {
     if (r.isValue()) {
       return hash_value(r.getValue());
-    } else if (r.isSymbol()) {
-      return hash_value(r.getSymbol());
+    } else if (r.isAttribute()) {
+      return hash_value(r.getAttribute());
     }
     return hash_value(r.getConst());
   }
@@ -150,6 +150,7 @@ namespace {
 /// - A map of children (e.g., members of a struct or elements of an array).
 /// An example:
 /// %self -> @arr -> 1 represents %self[@arr][1].
+/// %self -> @column -> -1 : index represents a prior-row member access.
 ///
 /// Values not in this tree are unknown, and therefore not subject to read/write
 /// elimination until they become known and can be eliminated when redundant operations
@@ -232,6 +233,18 @@ public:
   }
 
   void invalidateChildren() { children.clear(); }
+
+  void invalidateNonIntegerOffsetChildren() {
+    SmallVector<ReferenceID> invalidChildren;
+    for (const auto &[id, _] : children) {
+      if (!id.isAttribute() || !isa<IntegerAttr>(id.getAttribute())) {
+        invalidChildren.push_back(id);
+      }
+    }
+    for (const ReferenceID &id : invalidChildren) {
+      children.erase(id);
+    }
+  }
 
   bool isLeaf() const { return children.empty(); }
 
@@ -515,6 +528,27 @@ class PassImpl : public llzk::impl::RedundantReadAndWriteEliminationPassBase<Pas
       return nullptr;
     };
 
+    // An omitted table offset denotes the current row.
+    const IntegerAttr zeroTableOffset = IntegerAttr::get(IndexType::get(op->getContext()), 0);
+    auto getMemberNode = [&](Value component, FlatSymbolRefAttr member) {
+      return state.at(translate(component))->getOrCreateChild(member);
+    };
+    auto getMemberAccessNode = [&](MemberReadOp readm) {
+      std::shared_ptr<ReferenceNode> access =
+          getMemberNode(readm.getComponent(), readm.getMemberNameAttr());
+      access = access->getOrCreateChild(readm.getTableOffset().value_or(zeroTableOffset));
+      if (!readm.getMapOperands().empty()) {
+        access = access->getOrCreateChild(readm.getMapOpGroupSizesAttr());
+        access = access->getOrCreateChild(readm.getNumDimsPerMapAttr());
+      }
+      for (auto mapOperands : readm.getMapOperands()) {
+        for (Value operand : mapOperands) {
+          access = access->getOrCreateChild(translate(operand));
+        }
+      }
+      return access;
+    };
+
     // Read a value from an array. This works on both readarr operations (which
     // return a scalar value) and extractarr operations (which return a subarray).
     auto doArrayReadLike = [&]<HasInterface<ArrayAccessOpInterface> OpClass>(OpClass readarr) {
@@ -596,48 +630,49 @@ class PassImpl : public llzk::impl::RedundantReadAndWriteEliminationPassBase<Pas
       // adding this to readVals
       readVals.push_back(newStruct);
     } else if (auto readm = dyn_cast<MemberReadOp>(op)) {
-      auto structVal = state.at(translate(readm.getComponent()));
-      FlatSymbolRefAttr symbol = readm.getMemberNameAttr();
-      Value resVal = translate(readm.getVal());
-      // Check if such a child already exists.
-      if (auto child = structVal->getChild(symbol)) {
+      std::shared_ptr<ReferenceNode> access = getMemberAccessNode(readm);
+      Value resVal = readm.getVal();
+      if (!access->hasStoredValue()) {
+        access->setCurrentValue(resVal);
+      }
+      if (access->getStoredValue() != resVal) {
         LLVM_DEBUG(
             llvm::dbgs() << readm.getOperationName() << ": adding replacement map entry { "
-                         << resVal << " => " << child->getStoredValue() << " }\n"
+                         << resVal << " => " << access->getStoredValue() << " }\n"
         );
-        replacementMap[resVal] = child->getStoredValue();
+        replacementMap[resVal] = access->getStoredValue();
       } else {
-        // If we have no previous store, we create a new symbolic value for
-        // this location.
-        state[readm] = structVal->createChild(symbol, resVal);
-        LLVM_DEBUG(llvm::dbgs() << readm.getOperationName() << ": " << *state[readm] << '\n');
+        state[resVal] = access;
+        LLVM_DEBUG(llvm::dbgs() << readm.getOperationName() << ": " << *access << '\n');
       }
-      // specifically add the untranslated value back for removal checks
-      readVals.push_back(readm.getVal());
+      readVals.push_back(resVal);
     } else if (auto writem = dyn_cast<MemberWriteOp>(op)) {
-      auto structVal = state.at(translate(writem.getComponent()));
+      std::shared_ptr<ReferenceNode> member =
+          getMemberNode(writem.getComponent(), writem.getMemberNameAttr());
+      // Symbolic and affine offsets may resolve to the current row. Constant
+      // nonzero offsets stay distinct from a current-row member write.
+      member->invalidateNonIntegerOffsetChildren();
       Value writeVal = translate(writem.getVal());
-      FlatSymbolRefAttr symbol = writem.getMemberNameAttr();
       auto valTree = tryGetValTree(writeVal);
 
-      auto child = structVal->getOrCreateChild(symbol);
-      if (child->getStoredValue() == writeVal) {
+      auto access = member->getOrCreateChild(zeroTableOffset);
+      if (access->getStoredValue() == writeVal) {
         LLVM_DEBUG(
             llvm::dbgs() << writem.getOperationName() << ": recording redundant write " << writem
                          << '\n'
         );
         redundantWrites.push_back(writem);
       } else {
-        if (auto *lastWrite = child->updateLastWrite(writem)) {
+        if (auto *lastWrite = access->updateLastWrite(writem)) {
           LLVM_DEBUG(
               llvm::dbgs() << writem.getOperationName() << ": recording overwritten write "
                            << *lastWrite << '\n'
           );
           redundantWrites.push_back(lastWrite);
         }
-        child->setCurrentValue(writeVal, valTree);
+        access->setCurrentValue(writeVal, valTree);
         LLVM_DEBUG(
-            llvm::dbgs() << writem.getOperationName() << ": " << *child << " set to " << writeVal
+            llvm::dbgs() << writem.getOperationName() << ": " << *access << " set to " << writeVal
                          << '\n'
         );
       }

@@ -16,15 +16,18 @@ def RedundantReadAndWriteEliminationPass
     : LLZKPass<"llzk-duplicate-read-write-elim"> {
   let summary = "Remove redundant reads and writes";
   let description = [{
-    Remove read and write operations to struct members and arrays that are redundant or unnecessary.
+    Remove struct-member and array reads or writes that repeat the same access.
+    Struct-member accesses are equivalent only when the base value, member,
+    table offset, and affine-map operands all match.
   }];
 }
 
 def RedundantOperationEliminationPass : LLZKPass<"llzk-duplicate-op-elim"> {
   let summary = "Remove redundant operations";
   let description = [{
-    Remove llzk and arith dialect operations that produce the same results
-    as previously executed operations.
+    Remove equivalent memory-effect-free operations and duplicate LLZK constraints.
+    Global and RAM reads are reused only inside one block when no intervening
+    operation may modify the state they observe.
 
     Pass should be run after `llzk-duplicate-read-write-elim` for maximum effect.
   }];
