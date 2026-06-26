@@ -4,6 +4,12 @@ on:
     branches: [ main ]
   pull_request:
 
+permissions:
+  contents: read
+  checks: write
+  id-token: write
+  pull-requests: write
+
 jobs:
   run:
     strategy:
@@ -35,6 +41,8 @@ jobs:
         with:
           name: veridise-public
           authToken: '${{ secrets.CACHIX_PUBLIC_TOKEN }}'
+          skipPush: ${{ secrets.CACHIX_PUBLIC_TOKEN == '' }}
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
       - name: 'Build with ${{ matrix.compiler.name }}'
         run: "nix --print-build-logs build '${{ matrix.compiler.derivation }}'"
       - name: Upload test results
