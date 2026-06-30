@@ -548,10 +548,16 @@ class PassImpl : public llzk::impl::RedundantReadAndWriteEliminationPassBase<Pas
         KnownState parentState = cloneKnownState(state);
         SmallVector<KnownState> regionStates;
         for (Region &region : op.getRegions()) {
+          if (region.empty()) {
+            continue;
+          }
           auto regionState = runOnRegion(
               region, cloneKnownState(state), replacementMap, readVals, redundantWrites
           );
           regionStates.push_back(regionState);
+        }
+        if (regionStates.empty()) {
+          continue;
         }
 
         KnownState finalState = regionStates.front();
