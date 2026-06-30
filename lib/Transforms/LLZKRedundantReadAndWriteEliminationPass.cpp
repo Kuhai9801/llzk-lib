@@ -557,6 +557,8 @@ class PassImpl : public llzk::impl::RedundantReadAndWriteEliminationPassBase<Pas
           regionStates.push_back(regionState);
         }
         if (regionStates.empty()) {
+          // Region-bearing ops with no bodies still need their own effects handled.
+          runOperation(&op, state, replacementMap, readVals, redundantWrites);
           continue;
         }
 
