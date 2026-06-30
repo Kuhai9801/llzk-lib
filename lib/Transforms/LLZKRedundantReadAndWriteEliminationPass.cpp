@@ -452,16 +452,26 @@ class PassImpl : public llzk::impl::RedundantReadAndWriteEliminationPassBase<Pas
       ensure(it != endStates.end(), "unknown end state means we have an unsupported backedge");
       return cloneKnownState(it->second);
     };
+    auto hasBlockState = [&endStates](Block *blockPtr) {
+      return endStates.find(blockPtr) != endStates.end();
+    };
     std::deque<Block *> frontier;
-    frontier.push_back(&r.front());
-    DenseSet<Block *> visited;
+    DenseSet<Block *> queued;
+    DenseSet<Block *> processed;
+    auto enqueue = [&](Block *blockPtr) {
+      if (processed.find(blockPtr) == processed.end() && queued.insert(blockPtr).second) {
+        frontier.push_back(blockPtr);
+      }
+    };
+    enqueue(&r.front());
 
-    SmallVector<std::reference_wrapper<const KnownState>> terminalStates;
+    SmallVector<KnownState> terminalStates;
+    size_t deferralsWithoutProgress = 0;
 
     while (!frontier.empty()) {
       Block *currentBlock = frontier.front();
       frontier.pop_front();
-      visited.insert(currentBlock);
+      queued.erase(currentBlock);
 
       // get predecessors
       KnownState currentState;
@@ -471,6 +481,20 @@ class PassImpl : public llzk::impl::RedundantReadAndWriteEliminationPassBase<Pas
         // get the state for the entry block.
         currentState = getBlockState(nullptr);
       } else {
+        bool ready = true;
+        for (auto predIt = it; predIt != itEnd; predIt++) {
+          ready &= hasBlockState(*predIt);
+        }
+        if (!ready) {
+          deferralsWithoutProgress++;
+          ensure(
+              deferralsWithoutProgress <= frontier.size(),
+              "unknown end state means we have an unsupported backedge"
+          );
+          enqueue(currentBlock);
+          continue;
+        }
+
         currentState = getBlockState(*it);
         // If we have multiple predecessors, we take a pessimistic view and
         // set the state as only the intersection of all predecessor states
@@ -481,6 +505,7 @@ class PassImpl : public llzk::impl::RedundantReadAndWriteEliminationPassBase<Pas
       }
 
       // Run this block, consuming currentState and producing the endState
+      deferralsWithoutProgress = 0;
       auto endState = runOnBlock(
           *currentBlock, std::move(currentState), replacementMap, readVals, redundantWrites
       );
@@ -488,26 +513,25 @@ class PassImpl : public llzk::impl::RedundantReadAndWriteEliminationPassBase<Pas
       // Update the end states.
       // Since we only support the scf dialect, we should never have any
       // backedges, so we should never already have state for this block.
-      ensure(endStates.find(currentBlock) == endStates.end(), "backedge");
+      ensure(processed.find(currentBlock) == processed.end(), "backedge");
       endStates[currentBlock] = std::move(endState);
+      processed.insert(currentBlock);
 
       // add successors to frontier
       if (currentBlock->hasNoSuccessors()) {
-        terminalStates.push_back(endStates[currentBlock]);
+        terminalStates.push_back(cloneKnownState(endStates[currentBlock]));
       } else {
         for (Block *succ : currentBlock->getSuccessors()) {
-          if (visited.find(succ) == visited.end()) {
-            frontier.push_back(succ);
-          }
+          enqueue(succ);
         }
       }
     }
 
     // The final state is the intersection of all possible terminal states.
     ensure(!terminalStates.empty(), "computed no states");
-    auto finalState = terminalStates.front().get();
+    auto finalState = terminalStates.front();
     for (const auto *it = terminalStates.begin() + 1; it != terminalStates.end(); it++) {
-      finalState = intersect(finalState, it->get());
+      finalState = intersect(finalState, *it);
     }
     return finalState;
   }
