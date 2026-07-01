@@ -80,30 +80,6 @@ Value rebuildExprInCompute(
     return memo[val] = rebuiltOp->getResult(0);
   }
 
-  if (val.getType().isIndex()) {
-    // Preserve index producers used by member-read access operands so rebuilt reads
-    // keep the original access semantics.
-    Operation *defOp = val.getDefiningOp();
-    assert(defOp && "index block arguments should already be mapped");
-
-    IRMapping mapper;
-    for (Value operand : defOp->getOperands()) {
-      Value rebuiltOperand = mapValueIntoCompute(operand, computeFunc, builder, memo);
-      if (!rebuiltOperand) {
-        return nullptr;
-      }
-      mapper.map(operand, rebuiltOperand);
-    }
-
-    Operation *rebuiltOp = builder.clone(*defOp, mapper);
-    assert(
-        rebuiltOp->getNumResults() == defOp->getNumResults() &&
-        "cloned index op should preserve result count"
-    );
-    unsigned resultNumber = llvm::cast<OpResult>(val).getResultNumber();
-    return memo[val] = rebuiltOp->getResult(resultNumber);
-  }
-
   if (auto callOp = val.getDefiningOp<CallOp>()) {
     if (!callOp.getMapOperands().empty()) {
       callOp
@@ -160,6 +136,30 @@ Value rebuildExprInCompute(
       memo[oldResult] = newResult;
     }
     return memo[val];
+  }
+
+  if (val.getType().isIndex()) {
+    // Preserve index producers used by member-read access operands so rebuilt reads
+    // keep the original access semantics.
+    Operation *defOp = val.getDefiningOp();
+    assert(defOp && "index block arguments should already be mapped");
+
+    IRMapping mapper;
+    for (Value operand : defOp->getOperands()) {
+      Value rebuiltOperand = mapValueIntoCompute(operand, computeFunc, builder, memo);
+      if (!rebuiltOperand) {
+        return nullptr;
+      }
+      mapper.map(operand, rebuiltOperand);
+    }
+
+    Operation *rebuiltOp = builder.clone(*defOp, mapper);
+    assert(
+        rebuiltOp->getNumResults() == defOp->getNumResults() &&
+        "cloned index op should preserve result count"
+    );
+    unsigned resultNumber = llvm::cast<OpResult>(val).getResultNumber();
+    return memo[val] = rebuiltOp->getResult(resultNumber);
   }
 
   if (auto add = val.getDefiningOp<AddFeltOp>()) {
