@@ -599,6 +599,8 @@ class PassImpl : public llzk::impl::PolyLoweringPassBase<PassImpl> {
       EmitContainmentOp containOp, DenseSet<Value> &activeArrays,
       DenseMap<Attribute, OpOperand *> &finalElements
   ) {
+    // Track the final visible felt-array operands at boundaryOp, keyed by
+    // indices relative to viewPrefix. Ambiguous histories fail instead of guessing.
     auto arrayType = llvm::dyn_cast<llzk::array::ArrayType>(arrayValue.getType());
     if (!arrayType || !llvm::isa<FeltType>(arrayType.getElementType())) {
       return success();
