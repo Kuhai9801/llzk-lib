@@ -82,7 +82,7 @@ class PassImpl : public llzk::impl::UnusedDeclarationEliminationPassBase<PassImp
 
   /// @brief Removes unused members.
   /// A member is unused if it is never read from (only written to).
-  /// @param structDef
+  /// @param ctx
   LogicalResult removeUnusedMembers(PassContext &ctx) {
     ModuleOp modOp = getOperation();
 
