@@ -133,3 +133,58 @@ module attributes {llzk.lang} {
     }
   }
 }
+
+// -----
+
+module attributes {llzk.lang} {
+  struct.def @AmbiguousContainmentArrayInsertIndex {
+    function.def @compute(%a: !felt.type, %b: !felt.type, %c: !felt.type, %d: !felt.type, %i: index) -> !struct.type<@AmbiguousContainmentArrayInsertIndex> {
+      %self = struct.new : !struct.type<@AmbiguousContainmentArrayInsertIndex>
+      function.return %self : !struct.type<@AmbiguousContainmentArrayInsertIndex>
+    }
+
+    function.def @constrain(
+        %self: !struct.type<@AmbiguousContainmentArrayInsertIndex>,
+        %a: !felt.type,
+        %b: !felt.type,
+        %c: !felt.type,
+        %d: !felt.type,
+        %i: index
+    ) {
+      %table = array.new %a, %b, %c, %d : !array.type<2, 2, 1 x !felt.type>
+      %row = array.new : !array.type<2, 1 x !felt.type>
+      %inserted = array.new %a : !array.type<1 x !felt.type>
+      array.insert %row[%i] = %inserted : !array.type<2, 1 x !felt.type>, !array.type<1 x !felt.type>
+      // expected-error@+1 {{'constrain.in' op poly lowering cannot resolve containment RHS row write history: array.insert index is not static}}
+      constrain.in %table, %row : !array.type<2, 2, 1 x !felt.type>, !array.type<2, 1 x !felt.type>
+      function.return
+    }
+  }
+}
+
+// -----
+
+module attributes {llzk.lang} {
+  struct.def @AmbiguousContainmentArrayExtractIndex {
+    function.def @compute(%a: !felt.type, %b: !felt.type, %c: !felt.type, %d: !felt.type, %i: index) -> !struct.type<@AmbiguousContainmentArrayExtractIndex> {
+      %self = struct.new : !struct.type<@AmbiguousContainmentArrayExtractIndex>
+      function.return %self : !struct.type<@AmbiguousContainmentArrayExtractIndex>
+    }
+
+    function.def @constrain(
+        %self: !struct.type<@AmbiguousContainmentArrayExtractIndex>,
+        %a: !felt.type,
+        %b: !felt.type,
+        %c: !felt.type,
+        %d: !felt.type,
+        %i: index
+    ) {
+      %table = array.new %a, %b, %c, %d : !array.type<2, 2 x !felt.type>
+      %source = array.new %a, %b, %c, %d : !array.type<2, 2 x !felt.type>
+      %row = array.extract %source[%i] : !array.type<2, 2 x !felt.type>
+      // expected-error@+1 {{'constrain.in' op poly lowering cannot resolve containment RHS row write history: array.extract index is not static}}
+      constrain.in %table, %row : !array.type<2, 2 x !felt.type>, !array.type<2 x !felt.type>
+      function.return
+    }
+  }
+}
